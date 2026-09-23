@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Reports (generated artifacts, not source)
+reports/*
+!reports/.gitkeep
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
