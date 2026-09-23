@@ -19,6 +19,10 @@ venv/
 reports/*
 !reports/.gitkeep
 
+# Local JSON persistence (generated runtime state, not source)
+backend/data/*
+!backend/data/.gitkeep
+
 # Editor / OS
 .DS_Store
 .vscode/
