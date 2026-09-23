@@ -46,6 +46,9 @@ class JsonFileTestRunRepository:
             self._write_all(data)
         return run
 
+    def update(self, run: TestRunConfig) -> TestRunConfig:
+        return self.create(run)
+
     def list_all(self) -> list[TestRunConfig]:
         with self._lock:
             data = self._read_all()

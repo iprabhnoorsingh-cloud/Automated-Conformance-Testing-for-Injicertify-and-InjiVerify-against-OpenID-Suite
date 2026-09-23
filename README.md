@@ -11,18 +11,28 @@ and a breakdown of what's implemented vs. planned.
 
 ## Current milestone
 
-**Milestone 1 — Project Foundation.** This sets up the monorepo, a minimal
-FastAPI backend (health/identity endpoints only), a minimal Next.js
-dashboard shell (navigation placeholders + live backend health check), CI,
-and documentation. No conformance execution, orchestration, or reporting
-logic exists yet.
+**Milestone 3 — Test Orchestrator.** Building on Milestone 2's Test Run
+Configuration, this adds an orchestration engine that executes a
+configured run's test suites against its configured components as an
+ordered sequence of steps, via a pluggable executor. Only a deterministic,
+local, network-free mock executor is implemented — no real OpenID
+Foundation or MOSIP/Inji test-rig integration exists yet. See
+[docs/architecture.md](docs/architecture.md) for the full execution
+lifecycle and API.
+
+Prior milestones:
+
+- **Milestone 1 — Project Foundation.** Monorepo, minimal FastAPI backend
+  (health/identity endpoints), minimal Next.js dashboard shell, CI.
+- **Milestone 2 — Test Run Configuration.** CRUD API and UI for defining a
+  Test Run's environment, components, test suites, and benchmark gate.
+  Configuration only — no execution.
 
 ## Future milestones
 
-- Orchestrator for scheduling and running conformance test suites
-- OpenID Foundation conformance test integration
-- MOSIP/Inji API test-rig integration
-- Configurable benchmark/gate engine
+- Real OpenID Foundation conformance test integration
+- Real MOSIP/Inji API test-rig integration
+- Configurable benchmark/gate evaluation against real results
 - Report generation
 - Full CI/CD-gated conformance runs
 
@@ -75,3 +85,34 @@ npm run dev
 - Via frontend: the "Backend" indicator on the dashboard shows
   **Connected** or **Unavailable** based on the configured
   `NEXT_PUBLIC_API_URL`.
+
+## Test Run Configuration & Execution
+
+A **Test Run Configuration** captures what a future conformance run should
+target: a run name, environment (`development`/`staging`/`production`),
+one or more components (`inji-certify`, `inji-verify`), one or more test
+suites (each a `provider`/`suite_id`/`display_name`/`version` — real OpenID
+Foundation and MOSIP test-rig identifiers are not invented yet), a
+benchmark (`minimum_pass_rate`, `critical_failures_allowed`), and optional
+notes/metadata.
+
+Status model: `CONFIGURED → QUEUED → RUNNING → PASSED`/`FAILED`
+(`CANCELLED` reserved for later). A client can never set status directly —
+only the orchestrator changes it, by executing a run.
+
+API:
+
+| Method | Path                              | Purpose                              |
+| ------ | --------------------------------- | ------------------------------------- |
+| POST   | `/api/test-runs`                  | Create a configuration (status `CONFIGURED`) |
+| GET    | `/api/test-runs`                  | List all configurations               |
+| GET    | `/api/test-runs/{id}`             | Get one configuration                 |
+| DELETE | `/api/test-runs/{id}`             | Delete a configuration                |
+| POST   | `/api/test-runs/{id}/execute`     | Execute a configured run (local mock only) |
+| GET    | `/api/test-runs/{id}/execution`   | Get the latest execution for a run    |
+
+Execution runs one step per (component × test suite) pair, sequentially, via
+a deterministic local mock executor — **no real OpenID Foundation or
+MOSIP/Inji test-rig is called.** See
+[docs/architecture.md](docs/architecture.md) for the full execution
+lifecycle and what's intentionally not implemented yet.

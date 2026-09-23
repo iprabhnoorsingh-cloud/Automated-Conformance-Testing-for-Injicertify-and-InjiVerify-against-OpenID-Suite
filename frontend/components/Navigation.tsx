@@ -1,4 +1,4 @@
-const NAV_ITEMS = ["Dashboard", "Test Runs", "Environments", "Reports"];
+import Link from "next/link";
 
 export function Navigation() {
   return (
@@ -8,15 +8,21 @@ export function Navigation() {
           MOSIP Conformance Center
         </span>
         <nav className="flex gap-6 text-sm text-neutral-500 dark:text-neutral-400">
-          {NAV_ITEMS.map((item) => (
-            <span
-              key={item}
-              className="cursor-not-allowed"
-              title="Not implemented in this milestone"
-            >
-              {item}
-            </span>
-          ))}
+          <span className="cursor-not-allowed" title="Not implemented in this milestone">
+            Dashboard
+          </span>
+          <Link
+            href="/test-runs"
+            className="hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            Test Runs
+          </Link>
+          <span className="cursor-not-allowed" title="Not implemented in this milestone">
+            Environments
+          </span>
+          <span className="cursor-not-allowed" title="Not implemented in this milestone">
+            Reports
+          </span>
         </nav>
       </div>
     </header>
