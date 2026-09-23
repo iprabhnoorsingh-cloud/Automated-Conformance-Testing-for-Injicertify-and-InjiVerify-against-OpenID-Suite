@@ -23,6 +23,10 @@ reports/*
 backend/data/*
 !backend/data/.gitkeep
 
+# Inji API Test-Rig output, if a test rig (or its fixture) is ever run with
+# a working directory under the repo instead of an external one.
+testng-report/
+
 # Editor / OS
 .DS_Store
 .vscode/

@@ -8,6 +8,10 @@ import {
   COMPONENTS,
   ENVIRONMENTS,
   Environment,
+  INJI_CERTIFY_USE_CASES,
+  INJI_TEST_LEVELS,
+  InjiCertifyUseCase,
+  InjiTestLevel,
   PROVIDERS,
   TestSuiteConfig,
   createTestRun,
@@ -25,6 +29,19 @@ interface SuiteDraft {
   openidPlanConfiguration: string;
   openidVariant: string;
   openidModules: string;
+  // Inji Certify / Inji Verify API Test-Rig fields — only used/required
+  // when provider is "injicertify" / "injiverify" respectively.
+  injiTestLevel: InjiTestLevel;
+  injiEnvUser: string;
+  injiEnvEndpoint: string;
+  certifyUseCase: InjiCertifyUseCase;
+  certifyEsignetBaseUrl: string;
+  certifyInjiCertifyBaseUrl: string;
+  certifyMosipComponentsBaseUrls: string;
+  certifyEsignetActuatorPropertySection: string;
+  certifyUsePreConfiguredOtp: boolean;
+  certifySunbirdBaseUrl: string;
+  verifyInjiVerifyBaseUrl: string;
 }
 
 const EMPTY_SUITE: SuiteDraft = {
@@ -36,6 +53,17 @@ const EMPTY_SUITE: SuiteDraft = {
   openidPlanConfiguration: "",
   openidVariant: "",
   openidModules: "",
+  injiTestLevel: "smoke",
+  injiEnvUser: "",
+  injiEnvEndpoint: "",
+  certifyUseCase: "mock",
+  certifyEsignetBaseUrl: "",
+  certifyInjiCertifyBaseUrl: "",
+  certifyMosipComponentsBaseUrls: "",
+  certifyEsignetActuatorPropertySection: "",
+  certifyUsePreConfiguredOtp: false,
+  certifySunbirdBaseUrl: "",
+  verifyInjiVerifyBaseUrl: "",
 };
 
 export default function NewTestRunPage() {
@@ -98,15 +126,28 @@ export default function NewTestRunPage() {
       );
 
     validSuites.forEach((s, i) => {
-      if (s.provider !== "openid") return;
       const label = `Test suite #${i + 1} ("${s.display_name || s.suite_id}")`;
-      if (!s.openidPlanName.trim()) {
-        errors.push(
-          `${label}: OpenID plan name is required — a real Conformance Suite plan name, not invented.`,
-        );
+
+      if (s.provider === "openid") {
+        if (!s.openidPlanName.trim()) {
+          errors.push(
+            `${label}: OpenID plan name is required — a real Conformance Suite plan name, not invented.`,
+          );
+        }
+        parseJsonField(s.openidPlanConfiguration, `${label} plan configuration`, errors);
+        parseJsonField(s.openidVariant, `${label} variant`, errors);
       }
-      parseJsonField(s.openidPlanConfiguration, `${label} plan configuration`, errors);
-      parseJsonField(s.openidVariant, `${label} variant`, errors);
+
+      if (s.provider === "injicertify" || s.provider === "injiverify") {
+        if (!s.injiEnvUser.trim())
+          errors.push(`${label}: env.user is required.`);
+        if (!s.injiEnvEndpoint.trim())
+          errors.push(`${label}: env.endpoint is required.`);
+      }
+
+      if (s.provider === "injiverify" && !s.verifyInjiVerifyBaseUrl.trim()) {
+        errors.push(`${label}: injiVerifyBaseUrl is required.`);
+      }
     });
 
     const passRate = Number(minPassRate);
@@ -155,6 +196,36 @@ export default function NewTestRunPage() {
             modules: modules.length > 0 ? modules : undefined,
           };
         }
+
+        if (s.provider === "injicertify") {
+          suite.injicertify_config = {
+            test_level: s.injiTestLevel,
+            env_user: s.injiEnvUser.trim(),
+            env_endpoint: s.injiEnvEndpoint.trim(),
+            use_case_to_execute: s.certifyUseCase,
+            esignet_base_url: s.certifyEsignetBaseUrl.trim() || undefined,
+            inji_certify_base_url: s.certifyInjiCertifyBaseUrl.trim() || undefined,
+            mosip_components_base_urls:
+              s.certifyMosipComponentsBaseUrls.trim() || undefined,
+            esignet_actuator_property_section:
+              s.certifyEsignetActuatorPropertySection.trim() || undefined,
+            use_pre_configured_otp: s.certifyUsePreConfiguredOtp,
+            sunbird_base_url:
+              s.certifyUseCase === "sunbird"
+                ? s.certifySunbirdBaseUrl.trim() || undefined
+                : undefined,
+          };
+        }
+
+        if (s.provider === "injiverify") {
+          suite.injiverify_config = {
+            test_level: s.injiTestLevel,
+            env_user: s.injiEnvUser.trim(),
+            env_endpoint: s.injiEnvEndpoint.trim(),
+            inji_verify_base_url: s.verifyInjiVerifyBaseUrl.trim(),
+          };
+        }
+
         return suite;
       });
 
@@ -332,6 +403,152 @@ export default function NewTestRunPage() {
                   </div>
                 )}
 
+                {(suite.provider === "injicertify" ||
+                  suite.provider === "injiverify") && (
+                  <div className="flex flex-col gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      Runs the actual{" "}
+                      {suite.provider === "injicertify"
+                        ? "Inji Certify"
+                        : "Inji Verify"}{" "}
+                      API Test Rig as an external Java process (configured
+                      via INJI_{suite.provider === "injicertify" ? "CERTIFY" : "VERIFY"}
+                      _TEST_RIG_JAR/WORKDIR on the backend) — no fabricated
+                      test counts; results come from its own TestNG report.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={suite.injiTestLevel}
+                        onChange={(e) =>
+                          updateSuite(index, {
+                            injiTestLevel: e.target.value as InjiTestLevel,
+                          })
+                        }
+                        className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                      >
+                        {INJI_TEST_LEVELS.map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        placeholder="env.user (e.g. dev)"
+                        value={suite.injiEnvUser}
+                        onChange={(e) =>
+                          updateSuite(index, { injiEnvUser: e.target.value })
+                        }
+                        className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                      />
+                      <input
+                        placeholder="env.endpoint (e.g. https://api-internal.dev.mosip.net)"
+                        value={suite.injiEnvEndpoint}
+                        onChange={(e) =>
+                          updateSuite(index, { injiEnvEndpoint: e.target.value })
+                        }
+                        className="col-span-2 border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                      />
+                    </div>
+
+                    {suite.provider === "injicertify" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={suite.certifyUseCase}
+                          onChange={(e) =>
+                            updateSuite(index, {
+                              certifyUseCase: e.target.value as InjiCertifyUseCase,
+                            })
+                          }
+                          className="col-span-2 border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                        >
+                          {INJI_CERTIFY_USE_CASES.map((useCase) => (
+                            <option key={useCase} value={useCase}>
+                              useCaseToExecute: {useCase}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          placeholder="eSignetbaseurl (optional)"
+                          value={suite.certifyEsignetBaseUrl}
+                          onChange={(e) =>
+                            updateSuite(index, {
+                              certifyEsignetBaseUrl: e.target.value,
+                            })
+                          }
+                          className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                        />
+                        <input
+                          placeholder="injiCertifyBaseURL (optional)"
+                          value={suite.certifyInjiCertifyBaseUrl}
+                          onChange={(e) =>
+                            updateSuite(index, {
+                              certifyInjiCertifyBaseUrl: e.target.value,
+                            })
+                          }
+                          className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                        />
+                        <input
+                          placeholder="mosip_components_base_urls (optional)"
+                          value={suite.certifyMosipComponentsBaseUrls}
+                          onChange={(e) =>
+                            updateSuite(index, {
+                              certifyMosipComponentsBaseUrls: e.target.value,
+                            })
+                          }
+                          className="col-span-2 border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                        />
+                        <input
+                          placeholder="esignetActuatorPropertySection (optional)"
+                          value={suite.certifyEsignetActuatorPropertySection}
+                          onChange={(e) =>
+                            updateSuite(index, {
+                              certifyEsignetActuatorPropertySection: e.target.value,
+                            })
+                          }
+                          className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                        />
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={suite.certifyUsePreConfiguredOtp}
+                            onChange={(e) =>
+                              updateSuite(index, {
+                                certifyUsePreConfiguredOtp: e.target.checked,
+                              })
+                            }
+                          />
+                          usePreConfiguredOtp
+                        </label>
+                        {suite.certifyUseCase === "sunbird" && (
+                          <input
+                            placeholder="sunBirdBaseURL (sunbird use case)"
+                            value={suite.certifySunbirdBaseUrl}
+                            onChange={(e) =>
+                              updateSuite(index, {
+                                certifySunbirdBaseUrl: e.target.value,
+                              })
+                            }
+                            className="col-span-2 border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {suite.provider === "injiverify" && (
+                      <input
+                        placeholder="injiVerifyBaseUrl (required)"
+                        value={suite.verifyInjiVerifyBaseUrl}
+                        onChange={(e) =>
+                          updateSuite(index, {
+                            verifyInjiVerifyBaseUrl: e.target.value,
+                          })
+                        }
+                        className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                      />
+                    )}
+                  </div>
+                )}
+
                 {suites.length > 1 && (
                   <button
                     type="button"
@@ -354,9 +571,12 @@ export default function NewTestRunPage() {
               &ldquo;Local mock&rdquo; runs a deterministic local check for
               demo/testing. &ldquo;OpenID Foundation Conformance
               Suite&rdquo; drives a real Conformance Suite instance
-              (configured via OPENID_CONFORMANCE_BASE_URL on the backend) —
-              supply your own real plan name/configuration. MOSIP/Inji API
-              Test-Rig identifiers are introduced in a later milestone.
+              (configured via OPENID_CONFORMANCE_BASE_URL on the backend).
+              &ldquo;Inji Certify/Verify API Test Rig&rdquo; run the actual
+              Java test rigs as external processes (configured via
+              INJI_CERTIFY/VERIFY_TEST_RIG_JAR/WORKDIR on the backend). All
+              three require your own real target/configuration — nothing is
+              invented automatically.
             </p>
           </fieldset>
 

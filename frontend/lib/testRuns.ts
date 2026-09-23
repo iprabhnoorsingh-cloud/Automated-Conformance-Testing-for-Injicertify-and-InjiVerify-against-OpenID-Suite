@@ -35,13 +35,18 @@ export const COMPONENTS: Record<string, string> = {
 /**
  * Selectable providers for a test suite. "mock" is the M3 local
  * deterministic executor (for demo/testing); "openid" drives a real OpenID
- * Foundation Conformance Suite instance (Milestone 4) and requires
- * openid_config. Free-form provider strings are still accepted by the
- * backend for forward compatibility, but the UI only offers these two.
+ * Foundation Conformance Suite instance (Milestone 4); "injicertify" and
+ * "injiverify" run the actual Inji Certify / Inji Verify API Test-Rigs as
+ * an external Java process (Milestone 5). Each non-mock provider requires
+ * its matching *_config block. Free-form provider strings are still
+ * accepted by the backend for forward compatibility, but the UI only
+ * offers these four.
  */
 export const PROVIDERS: { id: string; label: string }[] = [
   { id: "mock", label: "Local mock (demo/testing)" },
   { id: "openid", label: "OpenID Foundation Conformance Suite" },
+  { id: "injicertify", label: "Inji Certify API Test Rig" },
+  { id: "injiverify", label: "Inji Verify API Test Rig" },
 ];
 
 export interface OpenIDSuiteConfig {
@@ -51,12 +56,55 @@ export interface OpenIDSuiteConfig {
   modules?: string[] | null;
 }
 
+export type InjiTestLevel = "smoke" | "smokeAndRegression";
+
+export const INJI_TEST_LEVELS: InjiTestLevel[] = ["smoke", "smokeAndRegression"];
+
+/**
+ * Use cases documented by the actual Inji Certify API Test Rig README
+ * (`useCaseToExecute`). Listing one here means the config model accepts
+ * it — it is not a claim that this project has verified a live run
+ * against every one without a real MOSIP/Inji deployment.
+ */
+export const INJI_CERTIFY_USE_CASES = [
+  "mosipid",
+  "mock",
+  "sunbird",
+  "landregistry",
+  "mdl",
+  "mdocvp",
+  "preauthcode",
+] as const;
+export type InjiCertifyUseCase = (typeof INJI_CERTIFY_USE_CASES)[number];
+
+export interface InjiCertifyTestRigConfig {
+  test_level: InjiTestLevel;
+  env_user: string;
+  env_endpoint: string;
+  use_case_to_execute: InjiCertifyUseCase;
+  esignet_base_url?: string | null;
+  inji_certify_base_url?: string | null;
+  mosip_components_base_urls?: string | null;
+  esignet_actuator_property_section?: string | null;
+  use_pre_configured_otp?: boolean | null;
+  sunbird_base_url?: string | null;
+}
+
+export interface InjiVerifyTestRigConfig {
+  test_level: InjiTestLevel;
+  env_user: string;
+  env_endpoint: string;
+  inji_verify_base_url: string;
+}
+
 export interface TestSuiteConfig {
   provider: string;
   suite_id: string;
   display_name: string;
   version?: string | null;
   openid_config?: OpenIDSuiteConfig | null;
+  injicertify_config?: InjiCertifyTestRigConfig | null;
+  injiverify_config?: InjiVerifyTestRigConfig | null;
 }
 
 export interface BenchmarkConfig {

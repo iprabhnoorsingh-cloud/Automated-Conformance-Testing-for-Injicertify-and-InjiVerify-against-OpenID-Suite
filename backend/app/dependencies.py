@@ -10,6 +10,11 @@ from pathlib import Path
 from app.config import settings
 from app.execution_repository import ExecutionRepository
 from app.executors import ExecutorRegistry, MockTestStepExecutor
+from app.inji_executors import (
+    CertifyApiTestRigExecutor,
+    InjiTestRigSettings,
+    VerifyApiTestRigExecutor,
+)
 from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
 from app.openid_client import OpenIDConformanceClient
@@ -37,6 +42,22 @@ _executor_registry = ExecutorRegistry(
         "openid": OpenIDConformanceExecutor(
             client=_openid_client,
             wait_timeout_ms=int(settings.openid_conformance_wait_timeout * 1000),
+        ),
+        "injicertify": CertifyApiTestRigExecutor(
+            InjiTestRigSettings(
+                jar_path=settings.inji_certify_test_rig_jar,
+                working_directory=settings.inji_certify_test_rig_workdir,
+                java_executable=settings.inji_test_rig_java,
+                timeout_seconds=settings.inji_test_rig_timeout_seconds,
+            )
+        ),
+        "injiverify": VerifyApiTestRigExecutor(
+            InjiTestRigSettings(
+                jar_path=settings.inji_verify_test_rig_jar,
+                working_directory=settings.inji_verify_test_rig_workdir,
+                java_executable=settings.inji_test_rig_java,
+                timeout_seconds=settings.inji_test_rig_timeout_seconds,
+            )
         ),
     }
 )

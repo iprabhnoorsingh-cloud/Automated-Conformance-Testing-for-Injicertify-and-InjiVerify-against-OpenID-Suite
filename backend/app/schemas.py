@@ -61,20 +61,90 @@ class OpenIDSuiteConfig(BaseModel):
     )
 
 
+class InjiTestLevel(str, Enum):
+    """The only two test levels the actual Inji API Test-Rigs document
+    (`env.testLevel`) — do not invent additional levels."""
+
+    SMOKE = "smoke"
+    SMOKE_AND_REGRESSION = "smokeAndRegression"
+
+
+class InjiCertifyUseCase(str, Enum):
+    """Use cases documented by the Inji Certify API Test Rig's own README
+    (`useCaseToExecute`). Listing a use case here means the config model
+    accepts it — it does not claim this project has verified a live run
+    against every one; only structural (argument/env construction, report
+    parsing) correctness is claimed without a real MOSIP/Inji deployment.
+    """
+
+    MOSIPID = "mosipid"
+    MOCK = "mock"
+    SUNBIRD = "sunbird"
+    LANDREGISTRY = "landregistry"
+    MDL = "mdl"
+    MDOCVP = "mdocvp"
+    PREAUTHCODE = "preauthcode"
+
+
+class InjiCertifyTestRigConfig(BaseModel):
+    """Configuration for the Inji Certify API Test Rig (external Java
+    process — see app/inji_executors.py). Field names map to the actual
+    JVM/environment-variable contract documented in the inji-certify
+    `api-test` README and implemented in its ConfigManager:
+
+    - `env_user` / `env_endpoint` / `test_level` -> `-Denv.user`,
+      `-Denv.endpoint`, `-Denv.testLevel` JVM args.
+    - Everything else -> OS environment variables of the same (MOSIP)
+      property name, which the test rig's ConfigManager reads via
+      `System.getenv(key)` in preference to its bundled properties file.
+    """
+
+    test_level: InjiTestLevel = InjiTestLevel.SMOKE
+    env_user: str = Field(..., min_length=1, max_length=100)
+    env_endpoint: str = Field(..., min_length=1, max_length=300)
+    use_case_to_execute: InjiCertifyUseCase = InjiCertifyUseCase.MOCK
+    esignet_base_url: Optional[str] = Field(default=None, max_length=300)
+    inji_certify_base_url: Optional[str] = Field(default=None, max_length=300)
+    mosip_components_base_urls: Optional[str] = Field(default=None, max_length=2000)
+    esignet_actuator_property_section: Optional[str] = Field(
+        default=None, max_length=200
+    )
+    use_pre_configured_otp: Optional[bool] = None
+    sunbird_base_url: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Only meaningful when use_case_to_execute is 'sunbird'.",
+    )
+
+
+class InjiVerifyTestRigConfig(BaseModel):
+    """Configuration for the Inji Verify API Test Rig (external Java
+    process). `inji_verify_base_url` is the one Verify-specific property
+    its README documents (`injiVerifyBaseUrl`) — no additional
+    Verify-specific parameters are invented here.
+    """
+
+    test_level: InjiTestLevel = InjiTestLevel.SMOKE
+    env_user: str = Field(..., min_length=1, max_length=100)
+    env_endpoint: str = Field(..., min_length=1, max_length=300)
+    inji_verify_base_url: str = Field(..., min_length=1, max_length=300)
+
+
 class TestSuiteConfig(BaseModel):
     """A reference to a test suite to be run against this configuration.
 
     `suite_id` is a free-form identifier on purpose: this milestone does not
-    know the real OpenID Foundation test-plan identifiers or MOSIP test-rig
-    identifiers, so it must accept whatever identifier later integration
-    milestones introduce without a schema change.
+    know every real MOSIP test-rig identifier scheme, so it must accept
+    whatever identifier later integration milestones introduce without a
+    schema change.
 
-    `openid_config` is optional at this (configuration) layer — a suite can
-    be saved without it. It is only required to actually *execute* a suite
-    whose provider is "openid"; OpenIDConformanceExecutor rejects that with
-    a clear, structured error rather than inventing plan details. Keeping
-    the requirement out of this schema avoids forcing OpenID-specific
-    fields onto non-OpenID providers.
+    `openid_config`/`injicertify_config`/`injiverify_config` are optional at
+    this (configuration) layer — a suite can be saved without one. Each is
+    only required to actually *execute* a suite whose provider matches it;
+    the corresponding executor rejects a mismatch with a clear, structured
+    error rather than inventing configuration. Keeping the requirement out
+    of this schema avoids forcing one provider's fields onto another's
+    suites.
     """
 
     provider: str = Field(..., min_length=1, max_length=100)
@@ -82,6 +152,8 @@ class TestSuiteConfig(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=200)
     version: Optional[str] = Field(default=None, max_length=50)
     openid_config: Optional[OpenIDSuiteConfig] = None
+    injicertify_config: Optional[InjiCertifyTestRigConfig] = None
+    injiverify_config: Optional[InjiVerifyTestRigConfig] = None
 
 
 class BenchmarkConfig(BaseModel):

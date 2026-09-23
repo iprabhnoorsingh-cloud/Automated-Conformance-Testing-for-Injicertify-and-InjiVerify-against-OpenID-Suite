@@ -11,15 +11,17 @@ and a breakdown of what's implemented vs. planned.
 
 ## Current milestone
 
-**Milestone 4 — OpenID Foundation Conformance Suite integration.** Adds a
-real executor (`provider: "openid"`) that drives an OpenID Foundation
-Conformance Suite instance's REST API — creating a plan, running its test
-module(s), waiting for a terminal state, and recording the actual result.
-This does **not** start/deploy Inji Certify, Inji Verify, or the
-Conformance Suite itself, and does not yet feed the MOSIP/Inji API
-Test-Rig, evaluate a benchmark gate, or generate a report. See
-[docs/architecture.md](docs/architecture.md) §5 for the full API flow,
-state mapping, and configuration.
+**Milestone 5 — Inji API Test-Rig integration.** Adds two real executors
+(`provider: "injicertify"` / `"injiverify"`) that run the actual Inji
+Certify / Inji Verify `api-test` Java module (REST Assured + TestNG,
+Maven-built) as an external process — invoking its real JAR with the same
+JVM arguments and environment-variable property overrides its own
+`entrypoint.sh`/`ConfigManager` use, then parsing its real TestNG
+`testng-results.xml` report. This does **not** build/deploy Inji Certify,
+Inji Verify, or any MOSIP infrastructure, run OpenID conformance,
+evaluate a benchmark gate, or generate a consolidated report. See
+[docs/architecture.md](docs/architecture.md) §6 for the full source-verified
+contract, subprocess control, and result parsing.
 
 Prior milestones:
 
@@ -32,11 +34,14 @@ Prior milestones:
   configured run's test suites as an ordered sequence of steps, via a
   pluggable executor. Introduced the local, deterministic mock executor
   (`provider: "mock"`).
+- **Milestone 4 — OpenID Foundation Conformance Suite integration.** Real
+  executor (`provider: "openid"`) driving a Conformance Suite instance's
+  REST API.
 
 ## Future milestones
 
-- MOSIP/Inji API Test-Rig integration
-- Automated Inji Certify / Inji Verify lifecycle management
+- Automated Inji Certify / Inji Verify lifecycle management (build/deploy)
+- Unified result normalization across OpenID and Inji Test-Rig evidence
 - Configurable benchmark/gate evaluation against real results
 - Report generation
 - Full CI/CD-gated conformance runs
@@ -107,12 +112,21 @@ notes/metadata.
   Requires `openid_config.plan_name` (a real plan name for your own
   Conformance Suite instance — never invented); optional
   `plan_configuration` (JSON body for the plan), `variant`, and `modules`.
-  A suite can be saved without `openid_config`, but executing it then fails
-  with a clear `missing_openid_configuration` error rather than a
-  fabricated result. See [docs/architecture.md](docs/architecture.md) §5.
-- MOSIP/Inji API Test-Rig identifiers are not invented yet (later
-  milestone) — any other provider string is accepted at configuration time
-  but fails execution with a structured `unknown_provider` error.
+  See [docs/architecture.md](docs/architecture.md) §5.
+- `"injicertify"` / `"injiverify"` — the real Inji Certify / Inji Verify
+  API Test-Rig, run as an external Java process. Requires
+  `injicertify_config` / `injiverify_config`: `test_level`
+  (`smoke`/`smokeAndRegression`), `env_user`, `env_endpoint`, and
+  (Certify only) `use_case_to_execute` plus optional
+  eSignet/injiCertify/mosip-components/sunbird overrides; (Verify only)
+  the required `inji_verify_base_url`. See
+  [docs/architecture.md](docs/architecture.md) §6.
+- Every `*_config` above is optional at configuration time — a suite can
+  be saved without one — but required to *execute*; a mismatch fails with
+  a clear `missing_configuration`/`missing_openid_configuration` error
+  rather than a fabricated result. Any other provider string is accepted
+  at configuration time but fails execution with a structured
+  `unknown_provider` error.
 
 Status model: `CONFIGURED → QUEUED → RUNNING → PASSED`/`FAILED`
 (`CANCELLED` reserved for later). A client can never set status directly —
@@ -130,12 +144,11 @@ API:
 | GET    | `/api/test-runs/{id}/execution`   | Get the latest execution for a run    |
 
 Execution runs one step per (component × test suite) pair, sequentially.
-Each step's `provider` determines its executor — `"mock"` never touches the
-network; `"openid"` drives a real Conformance Suite instance (see
-`OPENID_CONFORMANCE_BASE_URL` in `backend/.env.example`). **No MOSIP/Inji
-API Test-Rig is called yet.** See [docs/architecture.md](docs/architecture.md)
-for the full execution lifecycle and what's intentionally not implemented
-yet.
+Each step's `provider` determines its executor — `"mock"` never touches
+the network; `"openid"` drives a real Conformance Suite instance;
+`"injicertify"`/`"injiverify"` launch the real Inji API Test-Rig JAR as a
+subprocess. See [docs/architecture.md](docs/architecture.md) for the full
+execution lifecycle and what's intentionally not implemented yet.
 
 ### OpenID Conformance Suite environment variables
 
@@ -152,6 +165,29 @@ To run the opt-in live integration smoke test against a real instance:
 OPENID_CONFORMANCE_INTEGRATION=1 \
 OPENID_CONFORMANCE_BASE_URL=http://localhost:8443 \
 pytest tests/test_openid_integration.py -q
+```
+
+This never runs as part of the normal `pytest` suite or CI.
+
+### Inji API Test-Rig environment variables
+
+See `backend/.env.example`. Set `INJI_CERTIFY_TEST_RIG_JAR` /
+`INJI_CERTIFY_TEST_RIG_WORKDIR` (and/or the `_VERIFY_` equivalents) to a
+locally built `api-test` JAR/directory — clone `inji-certify`/`inji-verify`
+and run `mvn clean install` per that repo's own README first; this project
+does not build or fetch that JAR for you. `INJI_TEST_RIG_JAVA` (default
+`java`) and `INJI_TEST_RIG_TIMEOUT` (default 1800s) are also configurable.
+Without a configured JAR/working directory, executing an
+`"injicertify"`/`"injiverify"` suite fails clearly with
+`test_rig_not_configured` rather than silently doing nothing.
+
+To run the opt-in live smoke test against a real built JAR:
+
+```bash
+INJI_TEST_RIG_INTEGRATION=1 \
+INJI_CERTIFY_TEST_RIG_JAR=/path/to/inji-certify/api-test/target/apitest-injicertify-*-jar-with-dependencies.jar \
+INJI_CERTIFY_TEST_RIG_WORKDIR=/path/to/inji-certify/api-test/target \
+pytest tests/test_inji_testrig_integration.py -q
 ```
 
 This never runs as part of the normal `pytest` suite or CI.

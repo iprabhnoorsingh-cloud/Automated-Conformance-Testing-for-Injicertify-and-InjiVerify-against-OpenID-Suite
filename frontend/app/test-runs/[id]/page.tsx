@@ -208,6 +208,7 @@ export default function TestRunDetailPage() {
                           </p>
                         )}
                         {result && <OpenIDEvidence details={result.details} />}
+                        {result && <InjiTestRigEvidence details={result.details} />}
                       </li>
                     );
                   })}
@@ -273,6 +274,67 @@ function OpenIDEvidence({
           <div>Result: {String(module.result ?? "?")}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Shows Inji API Test-Rig evidence (Certify or Verify) for a step result —
+ * the real TestNG report counts and process exit code the executor
+ * actually got back. Never displays fabricated test counts: if the report
+ * couldn't be parsed, only the error_type is shown, not zero-filled counts.
+ */
+function InjiTestRigEvidence({
+  details,
+}: {
+  details?: Record<string, unknown> | null;
+}) {
+  if (!details) return null;
+  if (details.provider !== "injicertify" && details.provider !== "injiverify")
+    return null;
+
+  const label =
+    details.provider === "injicertify"
+      ? "Inji Certify API Test Rig"
+      : "Inji Verify API Test Rig";
+  const hasCounts = typeof details.tests_total === "number";
+  const failures = Array.isArray(details.failure_summary)
+    ? (details.failure_summary as unknown[]).map(String)
+    : [];
+
+  return (
+    <div className="mt-1 flex flex-col gap-1 border border-neutral-200 bg-neutral-50 p-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="font-medium text-neutral-600 dark:text-neutral-300">
+        {label}
+      </div>
+      {typeof details.test_level === "string" && (
+        <div>Test level: {details.test_level}</div>
+      )}
+      {typeof details.process_exit_code !== "undefined" && (
+        <div>Process exit code: {String(details.process_exit_code)}</div>
+      )}
+      {typeof details.error_type === "string" && (
+        <div className="text-red-600 dark:text-red-400">
+          Error: {details.error_type}
+        </div>
+      )}
+      {hasCounts && (
+        <div>
+          Tests: {String(details.tests_passed)} passed /{" "}
+          {String(details.tests_failed)} failed /{" "}
+          {String(details.tests_skipped)} skipped of{" "}
+          {String(details.tests_total)} total
+        </div>
+      )}
+      {typeof details.report_path === "string" && (
+        <div>Report: {details.report_path}</div>
+      )}
+      {failures.length > 0 && (
+        <div>
+          Failed tests: {failures.slice(0, 5).join(", ")}
+          {failures.length > 5 ? ` (+${failures.length - 5} more)` : ""}
+        </div>
+      )}
     </div>
   );
 }
