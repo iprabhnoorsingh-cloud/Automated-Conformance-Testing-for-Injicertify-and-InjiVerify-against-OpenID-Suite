@@ -8,7 +8,7 @@ fits into the planned pipeline.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -36,6 +36,31 @@ class TestRunStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class OpenIDSuiteConfig(BaseModel):
+    """OpenID Foundation Conformance Suite configuration for a test suite
+    whose provider is "openid" (see app/openid_executor.py).
+
+    `plan_name` and `plan_configuration` are supplied by whoever configures
+    the test run — real conformance plan names/configuration are never
+    invented by this project. `plan_configuration` is sent verbatim as the
+    JSON body of the Conformance Suite's `POST /api/plan` call, so this is
+    where a real target (e.g. an Inji Certify OpenID4VCI issuer endpoint)
+    is supplied.
+    """
+
+    plan_name: str = Field(..., min_length=1, max_length=200)
+    plan_configuration: Dict[str, Any] = Field(default_factory=dict)
+    variant: Optional[Dict[str, Any]] = None
+    modules: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Explicit test module names to run from the created plan. If "
+            "omitted, the executor resolves modules from the plan's own "
+            "module list."
+        ),
+    )
+
+
 class TestSuiteConfig(BaseModel):
     """A reference to a test suite to be run against this configuration.
 
@@ -43,12 +68,20 @@ class TestSuiteConfig(BaseModel):
     know the real OpenID Foundation test-plan identifiers or MOSIP test-rig
     identifiers, so it must accept whatever identifier later integration
     milestones introduce without a schema change.
+
+    `openid_config` is optional at this (configuration) layer — a suite can
+    be saved without it. It is only required to actually *execute* a suite
+    whose provider is "openid"; OpenIDConformanceExecutor rejects that with
+    a clear, structured error rather than inventing plan details. Keeping
+    the requirement out of this schema avoids forcing OpenID-specific
+    fields onto non-OpenID providers.
     """
 
     provider: str = Field(..., min_length=1, max_length=100)
     suite_id: str = Field(..., min_length=1, max_length=200)
     display_name: str = Field(..., min_length=1, max_length=200)
     version: Optional[str] = Field(default=None, max_length=50)
+    openid_config: Optional[OpenIDSuiteConfig] = None
 
 
 class BenchmarkConfig(BaseModel):

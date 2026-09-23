@@ -8,6 +8,7 @@ import {
   COMPONENTS,
   ENVIRONMENTS,
   Environment,
+  PROVIDERS,
   TestSuiteConfig,
   createTestRun,
 } from "@/lib/testRuns";
@@ -17,13 +18,24 @@ interface SuiteDraft {
   suite_id: string;
   display_name: string;
   version: string;
+  // OpenID Foundation Conformance Suite fields — only used/required when
+  // provider === "openid". Kept as raw text here (parsed/validated on
+  // submit) so the form doesn't fight the user over partially-typed JSON.
+  openidPlanName: string;
+  openidPlanConfiguration: string;
+  openidVariant: string;
+  openidModules: string;
 }
 
 const EMPTY_SUITE: SuiteDraft = {
-  provider: "",
+  provider: "mock",
   suite_id: "",
   display_name: "",
   version: "",
+  openidPlanName: "",
+  openidPlanConfiguration: "",
+  openidVariant: "",
+  openidModules: "",
 };
 
 export default function NewTestRunPage() {
@@ -61,6 +73,16 @@ export default function NewTestRunPage() {
     setSuites((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function parseJsonField(raw: string, fieldLabel: string, errors: string[]): unknown {
+    if (!raw.trim()) return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      errors.push(`${fieldLabel} must be valid JSON.`);
+      return undefined;
+    }
+  }
+
   function validate(): string[] {
     const errors: string[] = [];
     if (!runName.trim()) errors.push("Run name is required.");
@@ -74,6 +96,18 @@ export default function NewTestRunPage() {
       errors.push(
         "At least one test suite needs a provider, suite ID, and display name.",
       );
+
+    validSuites.forEach((s, i) => {
+      if (s.provider !== "openid") return;
+      const label = `Test suite #${i + 1} ("${s.display_name || s.suite_id}")`;
+      if (!s.openidPlanName.trim()) {
+        errors.push(
+          `${label}: OpenID plan name is required — a real Conformance Suite plan name, not invented.`,
+        );
+      }
+      parseJsonField(s.openidPlanConfiguration, `${label} plan configuration`, errors);
+      parseJsonField(s.openidVariant, `${label} variant`, errors);
+    });
 
     const passRate = Number(minPassRate);
     if (Number.isNaN(passRate) || passRate < 0 || passRate > 100)
@@ -96,12 +130,33 @@ export default function NewTestRunPage() {
 
     const test_suites: TestSuiteConfig[] = suites
       .filter((s) => s.provider.trim() && s.suite_id.trim() && s.display_name.trim())
-      .map((s) => ({
-        provider: s.provider.trim(),
-        suite_id: s.suite_id.trim(),
-        display_name: s.display_name.trim(),
-        version: s.version.trim() || undefined,
-      }));
+      .map((s) => {
+        const suite: TestSuiteConfig = {
+          provider: s.provider.trim(),
+          suite_id: s.suite_id.trim(),
+          display_name: s.display_name.trim(),
+          version: s.version.trim() || undefined,
+        };
+        if (s.provider === "openid") {
+          // Safe to parse directly here: validate() already rejected the
+          // submission if either JSON field failed to parse.
+          const modules = s.openidModules
+            .split(",")
+            .map((m) => m.trim())
+            .filter(Boolean);
+          suite.openid_config = {
+            plan_name: s.openidPlanName.trim(),
+            plan_configuration: s.openidPlanConfiguration.trim()
+              ? JSON.parse(s.openidPlanConfiguration)
+              : {},
+            variant: s.openidVariant.trim()
+              ? JSON.parse(s.openidVariant)
+              : undefined,
+            modules: modules.length > 0 ? modules : undefined,
+          };
+        }
+        return suite;
+      });
 
     setSubmitting(true);
     try {
@@ -191,14 +246,19 @@ export default function NewTestRunPage() {
                 className="flex flex-col gap-2 border border-neutral-200 p-3 dark:border-neutral-800"
               >
                 <div className="grid grid-cols-2 gap-2">
-                  <input
-                    placeholder="Provider (e.g. openid)"
+                  <select
                     value={suite.provider}
                     onChange={(e) =>
                       updateSuite(index, { provider: e.target.value })
                     }
                     className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
-                  />
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     placeholder="Suite ID"
                     value={suite.suite_id}
@@ -224,6 +284,54 @@ export default function NewTestRunPage() {
                     className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
                   />
                 </div>
+
+                {suite.provider === "openid" && (
+                  <div className="flex flex-col gap-2 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      OpenID Foundation Conformance Suite configuration. The
+                      plan name and configuration must be real values for
+                      your own Conformance Suite instance — nothing here is
+                      invented automatically.
+                    </p>
+                    <input
+                      placeholder="Plan name (required, e.g. oidcc-basic-certification-test-plan)"
+                      value={suite.openidPlanName}
+                      onChange={(e) =>
+                        updateSuite(index, { openidPlanName: e.target.value })
+                      }
+                      className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                    />
+                    <textarea
+                      placeholder='Plan configuration JSON (optional), e.g. {"alias": "my-test"}'
+                      value={suite.openidPlanConfiguration}
+                      onChange={(e) =>
+                        updateSuite(index, {
+                          openidPlanConfiguration: e.target.value,
+                        })
+                      }
+                      rows={2}
+                      className="border border-neutral-300 bg-transparent px-2 py-1.5 font-mono text-xs dark:border-neutral-700"
+                    />
+                    <textarea
+                      placeholder="Variant JSON (optional)"
+                      value={suite.openidVariant}
+                      onChange={(e) =>
+                        updateSuite(index, { openidVariant: e.target.value })
+                      }
+                      rows={2}
+                      className="border border-neutral-300 bg-transparent px-2 py-1.5 font-mono text-xs dark:border-neutral-700"
+                    />
+                    <input
+                      placeholder="Module names, comma-separated (optional — resolved from the plan if omitted)"
+                      value={suite.openidModules}
+                      onChange={(e) =>
+                        updateSuite(index, { openidModules: e.target.value })
+                      }
+                      className="border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+                    />
+                  </div>
+                )}
+
                 {suites.length > 1 && (
                   <button
                     type="button"
@@ -243,8 +351,12 @@ export default function NewTestRunPage() {
               Add test suite
             </button>
             <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Suite identifiers are placeholders — real OpenID Foundation and
-              MOSIP test-rig identifiers are introduced in a later milestone.
+              &ldquo;Local mock&rdquo; runs a deterministic local check for
+              demo/testing. &ldquo;OpenID Foundation Conformance
+              Suite&rdquo; drives a real Conformance Suite instance
+              (configured via OPENID_CONFORMANCE_BASE_URL on the backend) —
+              supply your own real plan name/configuration. MOSIP/Inji API
+              Test-Rig identifiers are introduced in a later milestone.
             </p>
           </fieldset>
 

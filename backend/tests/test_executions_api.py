@@ -6,10 +6,12 @@ from app.dependencies import (
     get_orchestrator,
     get_test_run_repository,
 )
-from app.executors import MockTestStepExecutor
+from app.executors import ExecutorRegistry, MockTestStepExecutor
 from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
 from app.main import app
+from app.openid_client import OpenIDConformanceClient
+from app.openid_executor import OpenIDConformanceExecutor
 from app.orchestrator import Orchestrator
 
 BASE_PAYLOAD = {
@@ -18,9 +20,9 @@ BASE_PAYLOAD = {
     "components": ["inji-certify"],
     "test_suites": [
         {
-            "provider": "openid",
-            "suite_id": "tbd-openid-suite",
-            "display_name": "OpenID Conformance (placeholder)",
+            "provider": "mock",
+            "suite_id": "tbd-suite",
+            "display_name": "Local mock suite (placeholder)",
         }
     ],
     "benchmark": {"minimum_pass_rate": 95, "critical_failures_allowed": 0},
@@ -31,12 +33,22 @@ BASE_PAYLOAD = {
 def client(tmp_path):
     test_runs_repo = JsonFileTestRunRepository(tmp_path / "test_runs.json")
     executions_repo = JsonFileExecutionRepository(tmp_path / "executions.json")
-    executor = MockTestStepExecutor()
+    # base_url=None: this OpenIDConformanceExecutor is never expected to
+    # reach the network in these tests — a suite missing openid_config is
+    # rejected before any HTTP call is made.
+    executors = ExecutorRegistry(
+        {
+            "mock": MockTestStepExecutor(),
+            "openid": OpenIDConformanceExecutor(
+                client=OpenIDConformanceClient(base_url=None)
+            ),
+        }
+    )
 
     app.dependency_overrides[get_test_run_repository] = lambda: test_runs_repo
     app.dependency_overrides[get_execution_repository] = lambda: executions_repo
     app.dependency_overrides[get_orchestrator] = lambda: Orchestrator(
-        test_runs_repo, executions_repo, executor
+        test_runs_repo, executions_repo, executors
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -82,7 +94,7 @@ def test_execute_failed_step_marks_execution_and_run_failed(client):
     run = _create_run(
         client,
         test_suites=[
-            {"provider": "openid", "suite_id": "will-fail", "display_name": "Will Fail"}
+            {"provider": "mock", "suite_id": "will-fail", "display_name": "Will Fail"}
         ],
     )
     response = client.post(f"/api/test-runs/{run['id']}/execute")
@@ -118,6 +130,31 @@ def test_client_supplied_status_is_ignored_on_create(client):
     response = client.post("/api/test-runs", json=payload)
     assert response.status_code == 201
     assert response.json()["status"] == "CONFIGURED"
+
+
+def test_openid_suite_without_config_is_accepted_but_fails_at_execution(client):
+    # Configuration (M2) deliberately doesn't require openid_config for a
+    # provider="openid" suite — only actually running it against the
+    # OpenID executor does, with a clear structured error rather than
+    # inventing a plan.
+    run = _create_run(
+        client,
+        test_suites=[
+            {
+                "provider": "openid",
+                "suite_id": "no-config-yet",
+                "display_name": "OpenID suite missing config",
+            }
+        ],
+    )
+    assert run["status"] == "CONFIGURED"
+
+    response = client.post(f"/api/test-runs/{run['id']}/execute")
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert body["step_results"][0]["details"]["error_type"] == (
+        "missing_openid_configuration"
+    )
 
 
 def test_existing_m2_crud_still_works(client):

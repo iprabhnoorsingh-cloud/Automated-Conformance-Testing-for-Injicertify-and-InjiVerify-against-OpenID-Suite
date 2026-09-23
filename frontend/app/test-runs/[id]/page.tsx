@@ -207,6 +207,7 @@ export default function TestRunDetailPage() {
                             {result.message}
                           </p>
                         )}
+                        {result && <OpenIDEvidence details={result.details} />}
                       </li>
                     );
                   })}
@@ -225,6 +226,53 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div className="grid grid-cols-3 gap-4 px-4 py-3">
       <dt className="text-neutral-500 dark:text-neutral-400">{label}</dt>
       <dd className="col-span-2">{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * Shows OpenID Foundation Conformance Suite evidence for a step result —
+ * the external plan/module IDs and result the executor actually got back.
+ * Renders nothing for non-OpenID steps (e.g. the local mock executor).
+ */
+function OpenIDEvidence({
+  details,
+}: {
+  details?: Record<string, unknown> | null;
+}) {
+  if (!details || details.provider !== "openid") return null;
+
+  const modules = Array.isArray(details.modules)
+    ? (details.modules as Record<string, unknown>[])
+    : [];
+
+  return (
+    <div className="mt-1 flex flex-col gap-1 border border-neutral-200 bg-neutral-50 p-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="font-medium text-neutral-600 dark:text-neutral-300">
+        OpenID Foundation Conformance Suite
+      </div>
+      {typeof details.plan_name === "string" && (
+        <div>Plan: {details.plan_name}</div>
+      )}
+      {typeof details.plan_id === "string" && (
+        <div>Plan ID: {details.plan_id}</div>
+      )}
+      {typeof details.error_type === "string" && (
+        <div className="text-red-600 dark:text-red-400">
+          Error: {details.error_type}
+        </div>
+      )}
+      {modules.map((module, i) => (
+        <div
+          key={i}
+          className="border-t border-neutral-200 pt-1 dark:border-neutral-800"
+        >
+          <div>Module: {String(module.module_name ?? "?")}</div>
+          <div>Module ID: {String(module.module_id ?? "?")}</div>
+          <div>External state: {String(module.external_state ?? "?")}</div>
+          <div>Result: {String(module.result ?? "?")}</div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import pytest
 
 from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
-from app.executors import MockTestStepExecutor
+from app.executors import ExecutorRegistry, MockTestStepExecutor
 from app.orchestration import ExecutionStatus
 from app.orchestrator import (
     EmptyExecutionPlanError,
@@ -56,7 +56,13 @@ class BrokenTestStepExecutor:
 def orchestrator_parts(tmp_path):
     test_runs_repo = JsonFileTestRunRepository(tmp_path / "test_runs.json")
     executions_repo = JsonFileExecutionRepository(tmp_path / "executions.json")
-    orchestrator = Orchestrator(test_runs_repo, executions_repo, MockTestStepExecutor())
+    # These tests exercise the Orchestrator's own sequencing/persistence
+    # logic, not any specific provider integration, so both provider
+    # strings used by fixtures below ("openid", "mosip") are routed to the
+    # same deterministic mock executor.
+    mock_executor = MockTestStepExecutor()
+    executors = ExecutorRegistry({"openid": mock_executor, "mosip": mock_executor})
+    orchestrator = Orchestrator(test_runs_repo, executions_repo, executors)
     return test_runs_repo, executions_repo, orchestrator
 
 
@@ -149,7 +155,8 @@ def test_failure_stops_remaining_steps(orchestrator_parts):
 def test_unexpected_executor_exception_is_handled(tmp_path):
     test_runs_repo = JsonFileTestRunRepository(tmp_path / "test_runs.json")
     executions_repo = JsonFileExecutionRepository(tmp_path / "executions.json")
-    orchestrator = Orchestrator(test_runs_repo, executions_repo, BrokenTestStepExecutor())
+    executors = ExecutorRegistry({"openid": BrokenTestStepExecutor()})
+    orchestrator = Orchestrator(test_runs_repo, executions_repo, executors)
     run = _make_run(test_runs_repo)
 
     execution = orchestrator.execute(run.id)
@@ -204,7 +211,8 @@ def test_empty_execution_plan_is_rejected(tmp_path):
     # build and run an empty plan, as defense in depth.
     test_runs_repo = _InMemoryTestRunRepository()
     executions_repo = JsonFileExecutionRepository(tmp_path / "executions.json")
-    orchestrator = Orchestrator(test_runs_repo, executions_repo, MockTestStepExecutor())
+    executors = ExecutorRegistry({"openid": MockTestStepExecutor()})
+    orchestrator = Orchestrator(test_runs_repo, executions_repo, executors)
 
     bad_run = TestRunConfig.model_construct(
         id="bad-run",
@@ -247,3 +255,23 @@ def test_get_latest_execution_for_nonexistent_run_raises(orchestrator_parts):
     _, _, orchestrator = orchestrator_parts
     with pytest.raises(TestRunNotFoundError):
         orchestrator.get_latest_execution("does-not-exist")
+
+
+def test_unregistered_provider_fails_step_without_crashing(tmp_path):
+    test_runs_repo = JsonFileTestRunRepository(tmp_path / "test_runs.json")
+    executions_repo = JsonFileExecutionRepository(tmp_path / "executions.json")
+    # No "unregistered-provider" entry registered.
+    executors = ExecutorRegistry({"openid": MockTestStepExecutor()})
+    orchestrator = Orchestrator(test_runs_repo, executions_repo, executors)
+
+    suites = [
+        TestSuiteConfig(
+            provider="unregistered-provider", suite_id="a", display_name="A"
+        )
+    ]
+    run = _make_run(test_runs_repo, test_suites=suites)
+
+    execution = orchestrator.execute(run.id)
+
+    assert execution.status == ExecutionStatus.FAILED
+    assert execution.step_results[0].details["error_type"] == "unknown_provider"

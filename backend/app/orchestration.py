@@ -28,6 +28,11 @@ class Step(BaseModel):
     """One planned step in an execution plan: one configured test suite run
     against one configured component. `status` reflects this step's current
     state within one specific execution.
+
+    `suite_config` carries the originating TestSuiteConfig (as a dict) so a
+    provider-specific executor (e.g. OpenIDConformanceExecutor) can read its
+    own configuration (plan name, plan configuration JSON, etc.) without
+    Step itself needing provider-specific typed fields.
     """
 
     step_id: str
@@ -36,6 +41,7 @@ class Step(BaseModel):
     component: str
     order: int
     status: ExecutionStatus = ExecutionStatus.QUEUED
+    suite_config: Optional[Dict] = None
 
 
 class StepResult(BaseModel):

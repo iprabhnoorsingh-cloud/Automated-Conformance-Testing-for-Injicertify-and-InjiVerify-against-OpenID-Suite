@@ -7,7 +7,7 @@ implementation used to exercise the orchestration engine end-to-end.
 """
 
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Dict, Protocol
 
 from pydantic import BaseModel
 
@@ -29,6 +29,34 @@ class ExecutionContext(BaseModel):
 
 class TestStepExecutor(Protocol):
     def execute(self, step: Step, context: ExecutionContext) -> StepResult: ...
+
+
+class UnknownProviderError(Exception):
+    """Raised by ExecutorRegistry when no executor is registered for a
+    step's provider."""
+
+    def __init__(self, provider: str):
+        super().__init__(f"No executor registered for provider: {provider!r}")
+        self.provider = provider
+
+
+class ExecutorRegistry:
+    """Resolves which TestStepExecutor handles a step, by its `provider`.
+
+    This is the single place that maps a provider string (e.g. "mock",
+    "openid") to a concrete executor, so the Orchestrator never branches on
+    provider directly — adding a new provider means registering one more
+    entry here, not editing orchestration logic.
+    """
+
+    def __init__(self, executors: Dict[str, "TestStepExecutor"]):
+        self._executors = dict(executors)
+
+    def resolve(self, provider: str) -> "TestStepExecutor":
+        try:
+            return self._executors[provider]
+        except KeyError:
+            raise UnknownProviderError(provider)
 
 
 class MockTestStepExecutor:

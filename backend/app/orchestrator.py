@@ -1,14 +1,17 @@
 """Test Run Orchestrator.
 
 Takes an existing CONFIGURED Test Run and executes its configured test
-suites against its configured components as an ordered sequence of steps,
-via a pluggable TestStepExecutor (see app/executors.py).
+suites against its configured components as an ordered sequence of steps.
+Each step is dispatched to a TestStepExecutor chosen by the step's
+`provider` field via an ExecutorRegistry (see app/executors.py) — the
+Orchestrator itself never branches on provider directly.
 
 Execution is sequential and synchronous for this milestone — deterministic,
 easy to debug, and a natural fit for the current local-only
-MockTestStepExecutor. The domain model (Execution/Step/StepResult) does not
-assume synchronous execution, so a future background/async execution model
-can replace how `execute()` is invoked without changing what it produces.
+MockTestStepExecutor and the (blocking-HTTP) OpenIDConformanceExecutor. The
+domain model (Execution/Step/StepResult) does not assume synchronous
+execution, so a future background/async execution model can replace how
+`execute()` is invoked without changing what it produces.
 
 A run's `status` field is only ever mutated here, via
 TestRunRepository.update — the CRUD API (app/test_runs.py) never accepts a
@@ -22,7 +25,7 @@ from typing import List
 
 from app.components import ALLOWED_COMPONENTS
 from app.execution_repository import ExecutionRepository
-from app.executors import ExecutionContext, TestStepExecutor
+from app.executors import ExecutionContext, ExecutorRegistry, UnknownProviderError
 from app.orchestration import Execution, ExecutionStatus, Step, StepResult
 from app.repository import TestRunRepository
 from app.schemas import TestRunConfig, TestRunStatus
@@ -57,11 +60,11 @@ class Orchestrator:
         self,
         test_run_repository: TestRunRepository,
         execution_repository: ExecutionRepository,
-        executor: TestStepExecutor,
+        executors: ExecutorRegistry,
     ):
         self._test_runs = test_run_repository
         self._executions = execution_repository
-        self._executor = executor
+        self._executors = executors
 
     def execute(self, test_run_id: str) -> Execution:
         run = self._test_runs.get(test_run_id)
@@ -142,7 +145,19 @@ class Orchestrator:
     ) -> StepResult:
         started_at = datetime.now(timezone.utc)
         try:
-            return self._executor.execute(step, context)
+            executor = self._executors.resolve(step.provider)
+        except UnknownProviderError as exc:
+            return StepResult(
+                step_id=step.step_id,
+                status=ExecutionStatus.FAILED,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+                message=str(exc),
+                details={"error_type": "unknown_provider", "provider": step.provider},
+            )
+
+        try:
+            return executor.execute(step, context)
         except Exception:
             logger.exception(
                 "Unexpected error executing step %s for test run %s",
@@ -173,6 +188,7 @@ class Orchestrator:
                         component=component,
                         order=order,
                         status=ExecutionStatus.QUEUED,
+                        suite_config=suite.model_dump(),
                     )
                 )
                 order += 1

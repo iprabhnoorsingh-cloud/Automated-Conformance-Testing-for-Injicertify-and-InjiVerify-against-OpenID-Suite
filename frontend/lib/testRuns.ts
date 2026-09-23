@@ -32,11 +32,31 @@ export const COMPONENTS: Record<string, string> = {
   "inji-verify": "Inji Verify",
 };
 
+/**
+ * Selectable providers for a test suite. "mock" is the M3 local
+ * deterministic executor (for demo/testing); "openid" drives a real OpenID
+ * Foundation Conformance Suite instance (Milestone 4) and requires
+ * openid_config. Free-form provider strings are still accepted by the
+ * backend for forward compatibility, but the UI only offers these two.
+ */
+export const PROVIDERS: { id: string; label: string }[] = [
+  { id: "mock", label: "Local mock (demo/testing)" },
+  { id: "openid", label: "OpenID Foundation Conformance Suite" },
+];
+
+export interface OpenIDSuiteConfig {
+  plan_name: string;
+  plan_configuration?: Record<string, unknown>;
+  variant?: Record<string, unknown> | null;
+  modules?: string[] | null;
+}
+
 export interface TestSuiteConfig {
   provider: string;
   suite_id: string;
   display_name: string;
   version?: string | null;
+  openid_config?: OpenIDSuiteConfig | null;
 }
 
 export interface BenchmarkConfig {
@@ -77,6 +97,7 @@ export interface Step {
   component: string;
   order: number;
   status: ExecutionStatus;
+  suite_config?: Record<string, unknown> | null;
 }
 
 export interface StepResult {

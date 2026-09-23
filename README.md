@@ -11,14 +11,15 @@ and a breakdown of what's implemented vs. planned.
 
 ## Current milestone
 
-**Milestone 3 — Test Orchestrator.** Building on Milestone 2's Test Run
-Configuration, this adds an orchestration engine that executes a
-configured run's test suites against its configured components as an
-ordered sequence of steps, via a pluggable executor. Only a deterministic,
-local, network-free mock executor is implemented — no real OpenID
-Foundation or MOSIP/Inji test-rig integration exists yet. See
-[docs/architecture.md](docs/architecture.md) for the full execution
-lifecycle and API.
+**Milestone 4 — OpenID Foundation Conformance Suite integration.** Adds a
+real executor (`provider: "openid"`) that drives an OpenID Foundation
+Conformance Suite instance's REST API — creating a plan, running its test
+module(s), waiting for a terminal state, and recording the actual result.
+This does **not** start/deploy Inji Certify, Inji Verify, or the
+Conformance Suite itself, and does not yet feed the MOSIP/Inji API
+Test-Rig, evaluate a benchmark gate, or generate a report. See
+[docs/architecture.md](docs/architecture.md) §5 for the full API flow,
+state mapping, and configuration.
 
 Prior milestones:
 
@@ -27,11 +28,15 @@ Prior milestones:
 - **Milestone 2 — Test Run Configuration.** CRUD API and UI for defining a
   Test Run's environment, components, test suites, and benchmark gate.
   Configuration only — no execution.
+- **Milestone 3 — Test Orchestrator.** Orchestration engine that executes a
+  configured run's test suites as an ordered sequence of steps, via a
+  pluggable executor. Introduced the local, deterministic mock executor
+  (`provider: "mock"`).
 
 ## Future milestones
 
-- Real OpenID Foundation conformance test integration
-- Real MOSIP/Inji API test-rig integration
+- MOSIP/Inji API Test-Rig integration
+- Automated Inji Certify / Inji Verify lifecycle management
 - Configurable benchmark/gate evaluation against real results
 - Report generation
 - Full CI/CD-gated conformance runs
@@ -88,13 +93,26 @@ npm run dev
 
 ## Test Run Configuration & Execution
 
-A **Test Run Configuration** captures what a future conformance run should
-target: a run name, environment (`development`/`staging`/`production`),
-one or more components (`inji-certify`, `inji-verify`), one or more test
-suites (each a `provider`/`suite_id`/`display_name`/`version` — real OpenID
-Foundation and MOSIP test-rig identifiers are not invented yet), a
-benchmark (`minimum_pass_rate`, `critical_failures_allowed`), and optional
+A **Test Run Configuration** captures what a conformance run should target:
+a run name, environment (`development`/`staging`/`production`), one or more
+components (`inji-certify`, `inji-verify`), one or more test suites (each a
+`provider`/`suite_id`/`display_name`/`version`, plus `openid_config` when
+`provider` is `"openid"` — see below), a benchmark
+(`minimum_pass_rate`, `critical_failures_allowed`), and optional
 notes/metadata.
+
+**Test suite providers:**
+- `"mock"` — local, deterministic, no network (demo/testing).
+- `"openid"` — a real OpenID Foundation Conformance Suite instance.
+  Requires `openid_config.plan_name` (a real plan name for your own
+  Conformance Suite instance — never invented); optional
+  `plan_configuration` (JSON body for the plan), `variant`, and `modules`.
+  A suite can be saved without `openid_config`, but executing it then fails
+  with a clear `missing_openid_configuration` error rather than a
+  fabricated result. See [docs/architecture.md](docs/architecture.md) §5.
+- MOSIP/Inji API Test-Rig identifiers are not invented yet (later
+  milestone) — any other provider string is accepted at configuration time
+  but fails execution with a structured `unknown_provider` error.
 
 Status model: `CONFIGURED → QUEUED → RUNNING → PASSED`/`FAILED`
 (`CANCELLED` reserved for later). A client can never set status directly —
@@ -111,8 +129,29 @@ API:
 | POST   | `/api/test-runs/{id}/execute`     | Execute a configured run (local mock only) |
 | GET    | `/api/test-runs/{id}/execution`   | Get the latest execution for a run    |
 
-Execution runs one step per (component × test suite) pair, sequentially, via
-a deterministic local mock executor — **no real OpenID Foundation or
-MOSIP/Inji test-rig is called.** See
-[docs/architecture.md](docs/architecture.md) for the full execution
-lifecycle and what's intentionally not implemented yet.
+Execution runs one step per (component × test suite) pair, sequentially.
+Each step's `provider` determines its executor — `"mock"` never touches the
+network; `"openid"` drives a real Conformance Suite instance (see
+`OPENID_CONFORMANCE_BASE_URL` in `backend/.env.example`). **No MOSIP/Inji
+API Test-Rig is called yet.** See [docs/architecture.md](docs/architecture.md)
+for the full execution lifecycle and what's intentionally not implemented
+yet.
+
+### OpenID Conformance Suite environment variables
+
+See `backend/.env.example`. At minimum, set `OPENID_CONFORMANCE_BASE_URL`
+to a local/staging Conformance Suite instance you control before executing
+any `"openid"`-provider suite — never point this at the public
+certification environment by default. Without it configured, executing
+such a suite fails with a clear configuration error rather than silently
+doing nothing.
+
+To run the opt-in live integration smoke test against a real instance:
+
+```bash
+OPENID_CONFORMANCE_INTEGRATION=1 \
+OPENID_CONFORMANCE_BASE_URL=http://localhost:8443 \
+pytest tests/test_openid_integration.py -q
+```
+
+This never runs as part of the normal `pytest` suite or CI.
