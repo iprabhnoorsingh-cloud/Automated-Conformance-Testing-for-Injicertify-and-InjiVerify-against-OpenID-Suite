@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import app.orchestrator as orchestrator_module
 from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
 from app.executors import ExecutorRegistry, MockTestStepExecutor
@@ -75,6 +76,9 @@ def test_valid_run_executes_successfully(orchestrator_parts):
     assert execution.status == ExecutionStatus.PASSED
     assert execution.total_steps == 1
     assert execution.completed_steps == 1
+    assert execution.benchmark_evaluation is not None
+    assert execution.benchmark_evaluation.status.value == "PASSED"
+    assert execution.benchmark_evaluation.evidence_complete is True
 
 
 def test_execution_produces_ordered_steps(orchestrator_parts):
@@ -119,6 +123,29 @@ def test_step_results_are_persisted_and_retrievable(orchestrator_parts):
     assert stored is not None
     assert len(stored.step_results) == 1
     assert stored.step_results[0].step_id == execution.steps[0].step_id
+    assert len(stored.normalized_results) == len(stored.step_results)
+    assert stored.normalized_results[0].raw_result == stored.step_results[0]
+    assert stored.benchmark_evaluation == execution.benchmark_evaluation
+    assert stored.benchmark_evaluation is not None
+    assert stored.benchmark_evaluation.status.value == "PASSED"
+
+
+def test_normalizer_failure_keeps_result_lists_aligned(orchestrator_parts, monkeypatch):
+    test_runs_repo, _, orchestrator = orchestrator_parts
+    run = _make_run(test_runs_repo)
+
+    def broken_normalizer(*_args, **_kwargs):
+        raise RuntimeError("normalizer boom")
+
+    monkeypatch.setattr(orchestrator_module, "normalize_step_result", broken_normalizer)
+
+    execution = orchestrator.execute(run.id)
+
+    assert len(execution.normalized_results) == len(execution.step_results) == 1
+    normalized = execution.normalized_results[0]
+    assert normalized.error_type == "normalization_failed"
+    assert normalized.normalization_error == "RuntimeError"
+    assert normalized.raw_result == execution.step_results[0]
 
 
 def test_failed_step_fails_execution_and_run(orchestrator_parts):
@@ -132,6 +159,8 @@ def test_failed_step_fails_execution_and_run(orchestrator_parts):
 
     assert execution.status == ExecutionStatus.FAILED
     assert execution.step_results[0].status == ExecutionStatus.FAILED
+    assert execution.benchmark_evaluation is not None
+    assert execution.benchmark_evaluation.status.value == "FAILED"
 
     updated_run = test_runs_repo.get(run.id)
     assert updated_run.status == TestRunStatus.FAILED

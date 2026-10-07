@@ -81,6 +81,29 @@ def test_execute_valid_run_returns_passed(client):
     assert body["total_steps"] == 1
     assert body["completed_steps"] == 1
     assert len(body["step_results"]) == 1
+    assert len(body["normalized_results"]) == len(body["step_results"])
+    assert body["normalized_results"][0]["raw_result"] == body["step_results"][0]
+    assert body["benchmark_evaluation"]["status"] == "PASSED"
+    assert body["benchmark_evaluation"]["evidence_complete"] is True
+
+
+def test_execution_endpoints_return_persisted_normalized_results(client):
+    run = _create_run(client)
+
+    created = client.post(f"/api/test-runs/{run['id']}/execute")
+    assert created.status_code == 201
+    created_body = created.json()
+
+    loaded = client.get(f"/api/test-runs/{run['id']}/execution")
+    assert loaded.status_code == 200
+    loaded_body = loaded.json()
+
+    assert loaded_body["id"] == created_body["id"]
+    assert len(loaded_body["normalized_results"]) == len(loaded_body["step_results"])
+    assert loaded_body["normalized_results"] == created_body["normalized_results"]
+    assert loaded_body["normalized_results"][0]["raw_result"] == loaded_body["step_results"][0]
+    assert loaded_body["benchmark_evaluation"] == created_body["benchmark_evaluation"]
+    assert loaded_body["benchmark_evaluation"]["status"] == "PASSED"
 
 
 def test_execute_updates_run_status_to_passed(client):

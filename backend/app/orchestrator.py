@@ -24,10 +24,12 @@ from datetime import datetime, timezone
 from typing import List
 
 from app.components import ALLOWED_COMPONENTS
+from app.benchmark_evaluator import evaluate_benchmark
 from app.execution_repository import ExecutionRepository
 from app.executors import ExecutionContext, ExecutorRegistry, UnknownProviderError
 from app.orchestration import Execution, ExecutionStatus, Step, StepResult
 from app.repository import TestRunRepository
+from app.result_normalizer import normalization_failure_result, normalize_step_result
 from app.schemas import TestRunConfig, TestRunStatus
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,22 @@ class Orchestrator:
             step.status = result.status
             execution.step_results.append(result)
             execution.completed_steps += 1
+
+            # M6: normalize immediately after the raw result is recorded.
+            # An unexpected normalizer error must not crash the execution or
+            # silently drop evidence: append a failed fallback instead.
+            try:
+                normalized = normalize_step_result(result, step)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Result normalizer raised unexpectedly for step %s; "
+                    "recording a normalization failure result.",
+                    step.step_id,
+                    exc_info=True,
+                )
+                normalized = normalization_failure_result(result, step, exc)
+            execution.normalized_results.append(normalized)
+
             self._executions.update(execution)
 
             if result.status != ExecutionStatus.PASSED:
@@ -120,6 +138,7 @@ class Orchestrator:
         execution.current_step = None
         execution.status = overall_status
         execution.completed_at = datetime.now(timezone.utc)
+        execution.benchmark_evaluation = evaluate_benchmark(run.benchmark, execution)
         self._executions.update(execution)
 
         run.status = (

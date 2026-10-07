@@ -32,15 +32,21 @@ A FastAPI service exposing:
 - `POST /api/test-runs/{id}/execute`, `GET /api/test-runs/{id}/execution` —
   triggers and observes orchestrated execution of a configured Test Run
   (Milestone 3; see §4).
+- `GET /api/test-runs/{id}/report?format=json|markdown` — projects the latest
+  persisted execution into a read-only M8 conformance report (see §8).
+
+`scripts/ci_gate.py` (Milestone 9, see §9) is a client of the execute
+endpoint, not a backend component.
 
 Configuration is environment-variable-based (see `app/config.py`).
 
 ## 4. Orchestrator
 
-Introduced in Milestone 3; Milestone 4 added the OpenID executor and
-Milestone 5 adds two more (Certify/Verify API Test-Rigs) alongside the
-local mock (see §5, §6). Benchmark evaluation, unified reporting, and
-CI/CD integration (§7-§9) remain NOT IMPLEMENTED.
+Introduced in Milestone 3; Milestone 4 added the OpenID executor;
+Milestone 5 added the Inji Certify/Verify Test-Rig executors;
+Milestone 6 added result normalization (see §6.5). Benchmark
+evaluation was added in Milestone 7 (see §7). Unified reporting and
+CI/CD integration (§9) remains NOT IMPLEMENTED.
 
 ```
 Test Run Configuration (M2)
@@ -56,10 +62,13 @@ ExecutorRegistry (M4): resolves a step's executor by its `provider` field
         └─ "injiverify"  → VerifyApiTestRigExecutor   (M5, real Inji Verify api-test JAR)
                                 ↓
                           InjiApiTestRigExecutor → external `java -jar` process → TestNG report
-        ↓
-Result Normalizer (future — NOT IMPLEMENTED)
-        ↓
-Benchmark Engine (future — NOT IMPLEMENTED)
+        ↓ (StepResult produced by executor)
+normalize_step_result()  (M6, backend/app/result_normalizer.py)
+        ↓ (NormalizedStepResult appended to Execution.normalized_results)
+evaluate_benchmark()  (M7, backend/app/benchmark_evaluator.py)
+        ↓ (BenchmarkEvaluation stored on Execution.benchmark_evaluation)
+build_conformance_report()  (M8, backend/app/report_generator.py)
+        ↓ (on-demand JSON or Markdown representation; no persisted artifact)
 ```
 
 **Execution plan.** One step is planned per (component × test suite) pair
@@ -412,28 +421,185 @@ Java, Maven, or a real Inji deployment. `tests/test_inji_testrig_integration.py`
 is a real-JAR smoke test, skipped unless `INJI_TEST_RIG_INTEGRATION=1` is
 set — it never runs in the normal `pytest` invocation or in CI.
 
-**Relationship to M4 and future M6.** M4 (OpenID) and M5 (Inji Test-Rigs)
+**Relationship to M4, M5, and M6.** M4 (OpenID) and M5 (Inji Test-Rigs)
 are deliberately separate `TestStepExecutor` implementations producing
 provider-specific `StepResult.details` — they are not merged into one
-result format. A future unified result/reporting milestone (M6) is
-expected to read both shapes and normalize *from* them, rather than this
-milestone collapsing them prematurely into a lossy common shape.
+result format at the executor level. M6's result normalizer (§6.5) reads
+both shapes and produces a common `NormalizedStepResult` from them.
 
-## 7. Future: Benchmark engine (NOT IMPLEMENTED)
+## 6.5. Result Normalization (Milestone 6)
 
-A configurable rules engine that evaluates normalized test results against
-pass/fail benchmarks/gates (e.g. required test coverage, required passing
-tests) to produce a conformance verdict.
+Implemented in `backend/app/result_normalizer.py`. Converts a raw
+`StepResult` from any of the four executors into a `NormalizedStepResult`:
+a stable, typed, provider-independent representation that M7 (benchmark
+evaluation) and M8 (report generation) consume without provider-specific
+parsing or branching on
+provider-specific dict shapes.
 
-## 8. Future: Reporting system (NOT IMPLEMENTED)
+**Integration point.** `normalize_step_result(result, step)` is called by
+the Orchestrator immediately after each step's `StepResult` is appended to
+`Execution.step_results`. The resulting `NormalizedStepResult` is appended
+to `Execution.normalized_results` (a new field added to the `Execution`
+domain model in `orchestration.py`). If the normalizer raises unexpectedly,
+the exception is caught, a warning is logged, and the orchestration
+continues — the normalizer can never crash a test run.
 
-Generation of human-readable and machine-readable conformance reports from
-normalized results and benchmark evaluations, surfaced in the dashboard and
-as downloadable artifacts.
+**Public API:**
 
-## 9. Future: CI/CD integration (NOT IMPLEMENTED)
+| Function | Purpose |
+|---|---|
+| `normalize_step_result(result, step)` | Normalize one `StepResult` |
+| `normalize_execution_results(step_results, steps)` | Normalize all results from one `Execution` |
 
-Hooks to trigger conformance runs from CI/CD pipelines and to gate merges or
-releases on conformance benchmark results. The current `.github/workflows/ci.yml`
-only builds/tests this repository's own code — it does not run conformance
-suites.
+**`NormalizedStepResult` fields** (all typed; consumers use these, not raw dicts):
+
+| Field | Type | Description |
+|---|---|---|
+| `step_id` | `str` | Opaque step identifier |
+| `display_name` | `str` | Human-readable step name |
+| `provider` | `str` | Executor provider (`"mock"`, `"openid"`, `"injicertify"`, `"injiverify"`) |
+| `component` | `str` | Component under test (`"inji-certify"`, `"inji-verify"`) |
+| `suite_id` | `Optional[str]` | Test suite identifier from `TestSuiteConfig` |
+| `status` | `ExecutionStatus` | Step outcome (same vocabulary as M3) |
+| `started_at` | `datetime` | Step start time |
+| `completed_at` | `Optional[datetime]` | Step end time |
+| `duration_seconds` | `Optional[float]` | Wall-clock duration |
+| `message` | `str` | Human-readable executor summary (verbatim) |
+| `error_type` | `Optional[str]` | Structured error category (`"missing_configuration"`, `"timeout"`, etc.) |
+| `normalization_error` | `Optional[str]` | Exception class when normalization itself failed and a safe fallback record was stored |
+| `provider_mismatch` | `Optional[str]` | Diagnostic if raw details disagree with the step's canonical provider |
+| `inji_test_counts` | `Optional[InjiTestCounts]` | TestNG counts — populated only for Inji providers that produced a parsed report |
+| `openid_plan_id` | `Optional[str]` | Conformance Suite plan ID — `openid` only |
+| `openid_plan_name` | `Optional[str]` | Conformance Suite plan name — `openid` only |
+| `openid_modules` | `Optional[List[OpenIDModuleResult]]` | Per-module results — `openid` only |
+| `source_details` | `Optional[Dict]` | Original `StepResult.details` dict, preserved verbatim |
+| `raw_result` | `StepResult` | Unmodified originating `StepResult` |
+
+**`InjiTestCounts` fields:** `total`, `passed`, `failed`, `skipped` (int),
+`failure_summary` (list of up to 20 failing method names as
+`"ClassName.methodName"`).
+
+**`OpenIDModuleResult` fields:** `module_id`, `module_name` (str),
+`external_state` (Optional[str] — raw Conformance Suite state), `result`
+(str — `"PASSED"`, `"FAILED"`, or `"UNKNOWN"`).
+
+**Design invariants:**
+- Never calls the network, launches processes, evaluates benchmarks, or
+  generates reports — purely a data transformation.
+- `inji_test_counts` is `None` on any Inji error path where the TestNG
+  report was not parsed (all four count keys must be present in details).
+- `openid_modules` is `None` on OpenID error paths before the plan phase.
+- Any missing or malformed field in `details` yields `None` or a safe
+  default — never raises.
+- `step.provider` is canonical. A conflicting `details["provider"]` is
+  preserved in `source_details` and recorded in `provider_mismatch`, but
+  never changes provider-specific parsing.
+- Every stored `StepResult` has exactly one corresponding normalized result.
+  An unexpected normalizer exception produces a `FAILED` fallback with
+  `error_type="normalization_failed"`, its exception class in
+  `normalization_error`, and the unmodified `raw_result`.
+- `source_details` and `raw_result` are preserved verbatim so no
+  source-specific information is lost.
+- Normalization is deterministic: same inputs always produce equal outputs.
+
+## 7. Benchmark / Gate Evaluation (Milestone 7)
+
+Implemented in `backend/app/benchmark_evaluator.py`. M7 is a pure,
+deterministic, provider-neutral gate evaluator. It consumes only the
+execution plan, normalized step results, and the existing global
+`BenchmarkConfig`; it never inspects raw provider details, OpenID module
+payloads, or TestNG details, and performs no I/O.
+
+**Scope.** Evaluation is at the normalized **step** level. There are no
+component-, suite-, or provider-specific thresholds; required/forbidden
+individual tests, minimum pass counts, and rule combinators remain outside
+M7's intentionally small scope.
+
+**Gate rules.** The existing configuration fields apply globally to the
+whole Test Run, with all conditions required:
+
+- `pass_rate >= minimum_pass_rate`
+- `failed_steps <= critical_failures_allowed`
+- evidence is complete
+
+For M7, every normalized step whose status is `FAILED` counts as one
+critical failure. Pass rate is `passed_steps / total_planned_steps * 100`;
+the denominator is planned steps, not completed steps. Therefore, steps
+left unexecuted by M3's fail-fast behavior reduce the pass rate.
+
+**Evidence safety.** M7 fails closed and records machine-readable
+`BenchmarkViolation` evidence if raw/normalized cardinality or ID mapping
+is invalid, a planned step lacks a normalized result, normalization failed,
+or a normalized status is non-final/unknown. It never produces a successful
+gate from partial evidence.
+
+**Persistence/API.** Each final `Execution` stores a separate
+`benchmark_evaluation` (`BenchmarkEvaluation`) with its own `PASSED`/`FAILED`
+verdict, evidence counts, configured thresholds, calculated pass rate, and
+violations. This does not change `Execution.status`, which remains the
+execution lifecycle/result state. Existing `POST /api/test-runs/{id}/execute`
+and `GET /api/test-runs/{id}/execution` responses expose the persisted
+evaluation.
+
+## 8. Report Generation (Milestone 8)
+
+Implemented in `backend/app/report_generator.py` and exposed by
+`GET /api/test-runs/{id}/report?format=json|markdown`. M8 is a read-only
+presentation layer over persisted `TestRunConfig`, `Execution`, normalized
+step results, and the persisted M7 `BenchmarkEvaluation`; it never executes
+tests, parses raw provider payloads, or re-evaluates a benchmark.
+
+**Formats.** JSON is the canonical typed `ConformanceReport` format.
+`format=markdown` returns a deterministic, downloadable `text/markdown`
+artifact. Both are generated on demand from persisted source-of-truth data;
+M8 creates no report database records and does not use the ignored
+`reports/` directory. There is deliberately no wall-clock `generated_at`
+field, so repeated generation from the same persisted execution is stable.
+
+**Content.** Reports contain the run/execution summary, copied M7 gate
+evidence and violations, ordered normalized step projections, and
+display-only component/suite/provider breakdowns. Step projections include
+normalized OpenID metadata and Inji TestNG counts where present, but exclude
+`raw_result` and `source_details`.
+
+**M7 authority.** The report copies the persisted M7 verdict without
+changing or recalculating its values. Incomplete normalized evidence and a
+failed benchmark still generate a report so their evidence remains visible;
+an execution lacking `benchmark_evaluation` returns HTTP 409 instead of
+silently re-evaluating M7. A Reports frontend page remains deferred.
+
+## 9. CI/CD-Gated Conformance Runs (Milestone 9)
+
+Implemented in `scripts/ci_gate.py`. M9 adds no backend endpoint, model,
+persistence, or background execution. The script is a thin standard-library
+HTTP client:
+
+```
+CI → scripts/ci_gate.py → POST /api/test-runs/{id}/execute (synchronous)
+   → completed Execution JSON → benchmark_evaluation.status
+   → PASSED: exit 0 · otherwise non-zero
+```
+
+**M7 authority.** The script only reads the persisted M7 verdict returned in
+the execute response; it never recomputes pass rates, thresholds, or
+failures. It consumes its own request's response, so it cannot read a stale
+or concurrent execution.
+
+**Fail-closed.** Exit `0` only for an explicit `PASSED`. Exit `1`: `FAILED`.
+Exit `2`: malformed/non-JSON response, missing `benchmark_evaluation`, or
+unrecognized status. Exit `3`: any HTTP error (404/409/422/5xx). Exit `4`:
+network failure or timeout. Exit `5`: invalid usage. Configuration: `--run-id`
+(required), `--base-url`/`MCC_API_URL`, `--timeout` (default 3600s).
+
+**CI.** The `conformance-gate` job in `.github/workflows/ci.yml` starts the
+backend, creates deterministic `mock`-provider runs, requires the passing run
+to exit `0` and the failing run to exit `1`. Ordinary CI never invokes the
+OpenID Conformance Suite or Inji test-rigs; those integration tests remain
+opt-in.
+
+**Deliberately not included.** Async/background execution, polling, an
+`execution_id` lookup, a gate endpoint, API authentication, webhooks or
+notifications. A long run depends on the HTTP client timeout (`--timeout`)
+and on any proxy in between not cutting the connection; a dropped
+connection fails the gate (exit 4). The API has no authentication, so the
+backend should only be reachable from trusted networks.

@@ -38,13 +38,43 @@ Prior milestones:
   executor (`provider: "openid"`) driving a Conformance Suite instance's
   REST API.
 
+## CI/CD conformance gate (Milestone 9)
+
+`scripts/ci_gate.py` executes a Test Run through the existing synchronous
+`POST /api/test-runs/{id}/execute` endpoint and exits according to the
+persisted M7 verdict (`benchmark_evaluation.status`) in the response. It
+does not evaluate anything itself — M7 remains the source of truth — and it
+is fail-closed: only an explicit `PASSED` verdict exits `0`.
+
+```bash
+python scripts/ci_gate.py --run-id <test-run-id> [--base-url http://localhost:8000] [--timeout 3600]
+```
+
+- `--run-id` (required): the Test Run to execute.
+- `--base-url` or env `MCC_API_URL` (default `http://localhost:8000`).
+- `--timeout`: seconds to wait for the synchronous run (default 3600).
+- Standard library only; no secrets are read or required.
+
+| Exit | Meaning |
+| ---- | ------- |
+| 0 | `benchmark_evaluation.status == "PASSED"` |
+| 1 | `FAILED` (gate failed; violations printed to stderr) |
+| 2 | non-JSON/malformed response, missing evaluation, or unrecognized status |
+| 3 | HTTP error from the backend (404, 409, 422, 5xx, ...) |
+| 4 | network failure or timeout |
+| 5 | invalid usage (bad base URL / timeout) |
+
+Ordinary CI (`conformance-gate` job in `.github/workflows/ci.yml`) proves
+the mechanism using only the deterministic `mock` provider: one passing run
+(must exit 0) and one failing run (must exit 1). Real OpenID Conformance and
+Inji test-rig integration tests remain opt-in and never run in CI.
+
 ## Future milestones
 
 - Automated Inji Certify / Inji Verify lifecycle management (build/deploy)
 - Unified result normalization across OpenID and Inji Test-Rig evidence
 - Configurable benchmark/gate evaluation against real results
 - Report generation
-- Full CI/CD-gated conformance runs
 
 ## Project structure
 

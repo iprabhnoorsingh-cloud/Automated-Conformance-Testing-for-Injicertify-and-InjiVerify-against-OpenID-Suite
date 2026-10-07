@@ -12,7 +12,6 @@ from app.executors import ExecutorRegistry, MockTestStepExecutor
 from app.inji_executors import CertifyApiTestRigExecutor, InjiTestRigSettings, VerifyApiTestRigExecutor
 from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
-from app.openid_client import OpenIDConformanceClient
 from app.openid_executor import OpenIDConformanceExecutor
 from app.orchestration import ExecutionStatus
 from app.orchestrator import Orchestrator
@@ -27,6 +26,27 @@ from app.schemas import (
 FIXTURE_JAVA = str(Path(__file__).parent / "fixtures" / "fake_java_rig.py")
 
 
+class FakeOpenIDClient:
+    """Offline conformance-suite double for orchestration integration tests."""
+
+    def create_plan(self, _plan_name, _configuration):
+        return {"id": "plan-1"}
+
+    def create_test_from_plan(self, _module_name, _plan_id, _variant):
+        return {"id": "module-1"}
+
+    def start_test(self, _module_id):
+        return None
+
+    def wait_for_state(self, _module_id, *, states, timeout_ms):
+        assert states == ["FINISHED", "INTERRUPTED"]
+        assert timeout_ms > 0
+        return {"status": "FINISHED"}
+
+    def get_test_info(self, _module_id):
+        return {"result": "PASSED"}
+
+
 def make_registry(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_RIG_SCENARIO", "pass")
 
@@ -38,7 +58,7 @@ def make_registry(tmp_path, monkeypatch):
     return ExecutorRegistry(
         {
             "mock": MockTestStepExecutor(),
-            "openid": OpenIDConformanceExecutor(client=OpenIDConformanceClient(base_url=None)),
+            "openid": OpenIDConformanceExecutor(client=FakeOpenIDClient()),
             "injicertify": CertifyApiTestRigExecutor(
                 InjiTestRigSettings(
                     jar_path=str(certify_jar),
@@ -130,6 +150,12 @@ def test_all_four_providers_dispatch_correctly_in_one_run(tmp_path, monkeypatch)
     for provider, suite_id, config_key, config in [
         ("mock", "a", None, None),
         (
+            "openid",
+            "b",
+            "openid_config",
+            {"plan_name": "offline-plan", "modules": ["offline-module"]},
+        ),
+        (
             "injicertify",
             "c",
             "injicertify_config",
@@ -167,6 +193,16 @@ def test_all_four_providers_dispatch_correctly_in_one_run(tmp_path, monkeypatch)
             f"{execution.step_results[0].message}"
         )
         assert execution.steps[0].provider == provider
+        assert len(execution.normalized_results) == len(execution.step_results) == 1
+        assert execution.normalized_results[0].raw_result == execution.step_results[0]
+        assert execution.normalized_results[0].provider == provider
+        stored = executions_repo.get(execution.id)
+        assert stored is not None
+        assert len(stored.normalized_results) == len(stored.step_results) == 1
+        assert stored.normalized_results[0] == execution.normalized_results[0]
+        assert execution.benchmark_evaluation is not None
+        assert execution.benchmark_evaluation.status.value == "PASSED"
+        assert stored.benchmark_evaluation == execution.benchmark_evaluation
 
 
 def test_openid_without_config_fails_clearly_alongside_other_providers(tmp_path, monkeypatch):
@@ -184,3 +220,6 @@ def test_openid_without_config_fails_clearly_alongside_other_providers(tmp_path,
     execution = orchestrator.execute("run-openid")
     assert execution.status == ExecutionStatus.FAILED
     assert execution.step_results[0].details["error_type"] == "missing_openid_configuration"
+    assert len(execution.normalized_results) == len(execution.step_results) == 1
+    assert execution.normalized_results[0].raw_result == execution.step_results[0]
+    assert execution.normalized_results[0].provider == "openid"

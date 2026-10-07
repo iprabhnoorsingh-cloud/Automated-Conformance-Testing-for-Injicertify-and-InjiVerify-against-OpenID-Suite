@@ -2,16 +2,27 @@
 
 These represent an attempt to run a configured Test Run's test suites
 against its configured components via the Orchestrator (see
-app/orchestrator.py). Nothing here talks to a real OpenID Foundation or
-MOSIP/Inji test-rig yet — see app/executors.py for the deterministic mock
-executor used in this milestone.
+app/orchestrator.py).
+
+Milestone 6 added ``Execution.normalized_results``: each step result
+passed through ``app.result_normalizer.normalize_step_result`` is
+appended here so M7 (benchmark) and M8 (reporting) can consume a
+provider-independent representation without re-parsing raw details.
 """
+
+from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    # Imported only for type-checking; at runtime result_normalizer imports
+    # from this module (orchestration), so we must not create a circular
+    # runtime import.  Pydantic resolves the forward reference lazily.
+    from app.result_normalizer import NormalizedStepResult
 
 
 class ExecutionStatus(str, Enum):
@@ -22,6 +33,38 @@ class ExecutionStatus(str, Enum):
     PASSED = "PASSED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+
+
+class BenchmarkStatus(str, Enum):
+    """Final verdict of the M7 benchmark gate, separate from execution state."""
+
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+
+
+class BenchmarkViolation(BaseModel):
+    """One stable, machine-readable reason a benchmark gate did not pass."""
+
+    code: str
+    message: str
+    expected: Optional[Union[str, int, float, bool]] = None
+    actual: Optional[Union[str, int, float, bool]] = None
+    step_ids: Optional[List[str]] = None
+
+
+class BenchmarkEvaluation(BaseModel):
+    """Persisted, provider-neutral M7 gate evidence for one Execution."""
+
+    status: BenchmarkStatus
+    evidence_complete: bool
+    total_planned_steps: int
+    normalized_result_count: int
+    passed_steps: int
+    failed_steps: int
+    pass_rate: float
+    minimum_pass_rate: float
+    critical_failures_allowed: int
+    violations: List[BenchmarkViolation] = Field(default_factory=list)
 
 
 class Step(BaseModel):
@@ -68,3 +111,18 @@ class Execution(BaseModel):
     completed_steps: int = 0
     steps: List[Step]
     step_results: List[StepResult] = Field(default_factory=list)
+    normalized_results: List["NormalizedStepResult"] = Field(
+        default_factory=list,
+        description=(
+            "M6: provider-independent normalized form of each StepResult, "
+            "produced by app.result_normalizer.normalize_step_result. "
+            "Empty until the orchestrator populates it after each step."
+        ),
+    )
+    benchmark_evaluation: Optional[BenchmarkEvaluation] = Field(
+        default=None,
+        description=(
+            "M7: provider-neutral benchmark verdict calculated from the "
+            "execution plan and normalized results after execution completes."
+        ),
+    )
