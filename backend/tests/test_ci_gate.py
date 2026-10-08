@@ -26,6 +26,7 @@ from app.json_execution_repository import JsonFileExecutionRepository
 from app.json_repository import JsonFileTestRunRepository
 from app.main import app
 from app.orchestrator import Orchestrator
+from tests.conftest import AUTH_HEADERS, TEST_API_KEY
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci_gate.py"
 _spec = importlib.util.spec_from_file_location("ci_gate", SCRIPT)
@@ -213,7 +214,10 @@ def live_gate(tmp_path, monkeypatch):
 
         def route_to_app(request, timeout=None):
             path = request.full_url.replace("http://backend.test", "")
-            resp = client.post(path)
+            # Forward exactly what ci_gate.py sent: the client itself holds
+            # no credentials, so this proves the script authenticates.
+            auth = request.get_header("Authorization")
+            resp = client.post(path, headers={"Authorization": auth} if auth else {})
             if resp.status_code >= 400:
                 raise urllib.error.HTTPError(
                     request.full_url, resp.status_code, "err", {}, io.BytesIO(resp.content)
@@ -228,6 +232,7 @@ def live_gate(tmp_path, monkeypatch):
 def _create_run(client, suite_id):
     response = client.post(
         "/api/test-runs",
+        headers=AUTH_HEADERS,
         json={
             "run_name": f"ci gate {suite_id}",
             "environment": "development",
@@ -242,13 +247,15 @@ def _create_run(client, suite_id):
     return response.json()["id"]
 
 
-def test_end_to_end_mock_passed_run_exits_zero(live_gate):
+def test_end_to_end_mock_passed_run_exits_zero(live_gate, monkeypatch):
+    monkeypatch.setenv("MCC_API_KEY", TEST_API_KEY)
     run_id = _create_run(live_gate, "conformance-ok")
 
     assert ci_gate.main(["--run-id", run_id, "--base-url", "http://backend.test"]) == 0
 
 
-def test_end_to_end_mock_failing_run_exits_non_zero(live_gate):
+def test_end_to_end_mock_failing_run_exits_non_zero(live_gate, monkeypatch):
+    monkeypatch.setenv("MCC_API_KEY", TEST_API_KEY)
     run_id = _create_run(live_gate, "conformance-fail")
 
     code = ci_gate.main(["--run-id", run_id, "--base-url", "http://backend.test"])
@@ -256,7 +263,28 @@ def test_end_to_end_mock_failing_run_exits_non_zero(live_gate):
     assert code == ci_gate.EXIT_GATE_FAILED
 
 
-def test_end_to_end_unknown_run_exits_non_zero(live_gate):
+def test_end_to_end_unknown_run_exits_non_zero(live_gate, monkeypatch):
+    monkeypatch.setenv("MCC_API_KEY", TEST_API_KEY)
     code = ci_gate.main(["--run-id", "missing", "--base-url", "http://backend.test"])
+
+    assert code == ci_gate.EXIT_HTTP_ERROR
+
+
+# --- M10: authentication ----------------------------------------------------
+
+
+def test_sends_bearer_key_from_environment(monkeypatch):
+    monkeypatch.setenv("MCC_API_KEY", TEST_API_KEY)
+    calls = _patch_urlopen(monkeypatch, _respond_json(_execution("PASSED")))
+
+    assert ci_gate.main(ARGS) == 0
+    assert calls[0][0].get_header("Authorization") == f"Bearer {TEST_API_KEY}"
+
+
+def test_without_key_backend_401_is_exit_http_error(live_gate, monkeypatch):
+    monkeypatch.delenv("MCC_API_KEY", raising=False)
+    run_id = _create_run(live_gate, "conformance-ok")
+
+    code = ci_gate.main(["--run-id", run_id, "--base-url", "http://backend.test"])
 
     assert code == ci_gate.EXIT_HTTP_ERROR

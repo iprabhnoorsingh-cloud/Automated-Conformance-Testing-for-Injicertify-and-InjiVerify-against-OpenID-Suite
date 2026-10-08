@@ -601,5 +601,73 @@ opt-in.
 `execution_id` lookup, a gate endpoint, API authentication, webhooks or
 notifications. A long run depends on the HTTP client timeout (`--timeout`)
 and on any proxy in between not cutting the connection; a dropped
-connection fails the gate (exit 4). The API has no authentication, so the
-backend should only be reachable from trusted networks.
+connection fails the gate (exit 4). M9 originally shipped without API authentication; that is superseded by
+M10 (§10), which makes `ci_gate.py` send `Authorization: Bearer $MCC_API_KEY`.
+
+## 10. Security Hardening (Milestone 10)
+
+M10 changes no execution, normalization (M6), evaluation (M7), reporting (M8)
+or gate (M9) semantics. The only touch to M9 artifacts is credential plumbing
+(`ci_gate.py` sends the bearer key from `MCC_API_KEY`; the workflow generates
+a throwaway key and passes it to `curl`); exit codes and the synchronous
+contract are unchanged.
+
+**Authentication** (`app/auth.py`). One ASGI middleware, registered inside
+the CORS layer, guards every route and unknown path; only `GET /health` is
+exempt. Bearer key from `MCC_API_KEY` (≥16 chars), constant-time comparison,
+fail-closed when unconfigured, identical generic 401 for missing/invalid
+credentials, evaluated before routing so 401 never reveals whether a
+resource exists. Single shared key: no users, roles, or per-tenant isolation.
+
+**SSRF policy** (`app/outbound.py`). Schemes `http`/`https` only; no userinfo,
+control characters or backslashes; every host must be a public address (IPv4
+and IPv6, including mapped/NAT64/6to4/Teredo forms and unusual numeric IPv4
+spellings); `localhost`, `*.localhost/.local/.internal/.localdomain` are
+rejected. Fields covered: `env_endpoint`, `esignet_base_url`,
+`inji_certify_base_url`, `mosip_components_base_urls` (every URL in it),
+`sunbird_base_url`, `inji_verify_base_url`, plus any `scheme://` string
+anywhere in an OpenID `plan_configuration`/`variant`. Applied twice: at
+`POST /api/test-runs` (syntactic, no DNS; HTTP 422) and in the orchestrator
+immediately before each step (with DNS; failure yields a FAILED step with
+`error_type=unsafe_destination`, which M7 treats as a gate failure).
+*Known limits:* (1) the Inji Java test rigs and the OpenID Conformance Suite
+perform the real connections after validation, resolve DNS again and may
+follow redirects, so DNS rebinding and redirect-to-internal are **not**
+prevented; (2) arbitrary public ports are allowed; (3) private-network
+targets are unsupported by design. Complete protection needs egress filtering
+at the network layer. The application's own HTTP client only contacts the
+operator-configured `OPENID_CONFORMANCE_BASE_URL`, which is deployment
+configuration and exempt from this policy.
+
+**Bounded concurrency** (`app/concurrency.py`). A process-wide non-blocking
+limiter (`MCC_MAX_CONCURRENT_EXECUTIONS`, default 2) lives inside
+`Orchestrator.execute`, so every present or future caller shares it. When
+full: HTTP 429 + `Retry-After`, nothing created. The slot is released in a
+`finally`, on success, failed steps or exceptions. Execution remains
+synchronous.
+
+**Secret redaction** (`app/redaction.py`). Response-layer only — the stored
+JSON retains real values because executors need them (protect `backend/data/`
+with filesystem permissions). Test-run, execution and report outputs replace
+values of sensitive keys (`env_user`, `*secret*`, `*password*`, `*token*`,
+`*credential*`, `*private*`, `*api_key*`, `authorization`, `cookie`, `jwk(s)`,
+...) recursively, redact PEM private keys, and scrub secret-shaped substrings
+in execution evidence (process output, failure summaries, messages) using the
+pre-existing subprocess sanitizer (broadened to catch `client_secret` and
+quoted JSON keys). Reports are generated from redacted copies. Residual:
+`-Denv.user=` appears in the host's process list while a rig runs; pattern
+scrubbing is best-effort; 422 validation errors echo the caller's own input.
+
+**Report safety** (`app/report_generator.py`). Untrusted text is folded to a
+single line (all Unicode line separators and control characters), and
+backslash, pipe and backtick are escaped in table cells (backslash first so
+`\|` cannot cancel the escape); inline code spans replace backticks. No HTML
+sanitization is attempted: Markdown consumers that render raw HTML should
+sanitize it themselves.
+
+**Deployment constraint — single worker.** JSON persistence
+(`json_repository.py`, `json_execution_repository.py`) uses an in-process
+`threading.Lock`, and the limiter is in-process. Exactly one Uvicorn process
+is supported; `--workers` > 1 (or several replicas sharing `backend/data/`)
+can corrupt state and multiplies the concurrency limit. Multi-process
+deployment requires a persistence redesign.

@@ -10,9 +10,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.components import ALLOWED_COMPONENTS
+from app.outbound import UnsafeDestinationError, validate_suite_config_urls
 
 
 class Environment(str, Enum):
@@ -188,6 +189,19 @@ class TestRunBase(BaseModel):
 
 class TestRunCreateRequest(TestRunBase):
     """Shape accepted by POST /api/test-runs."""
+
+    @model_validator(mode="after")
+    def outbound_destinations_must_be_safe(self) -> "TestRunCreateRequest":
+        """M10 SSRF policy, request-time half: reject unsafe destinations
+        early (HTTP 422) without DNS lookups. Only applied to NEW runs, so
+        previously stored runs still load; the orchestrator re-validates
+        with DNS resolution at execution time (see app/outbound.py)."""
+        for index, suite in enumerate(self.test_suites):
+            try:
+                validate_suite_config_urls(suite.model_dump(), resolve=False)
+            except UnsafeDestinationError as exc:
+                raise ValueError(f"test_suites[{index}].{exc}") from None
+        return self
 
 
 class TestRunConfig(TestRunBase):

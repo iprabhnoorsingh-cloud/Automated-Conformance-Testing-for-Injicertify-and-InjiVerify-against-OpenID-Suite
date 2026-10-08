@@ -8,6 +8,7 @@ allowed to change a run's status.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.concurrency import ExecutionCapacityError
 from app.dependencies import get_orchestrator
 from app.orchestration import Execution
 from app.orchestrator import (
@@ -16,6 +17,7 @@ from app.orchestrator import (
     Orchestrator,
     TestRunNotFoundError,
 )
+from app.redaction import redact_model
 
 router = APIRouter(prefix="/api/test-runs", tags=["executions"])
 
@@ -28,11 +30,18 @@ def execute_test_run(
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Execution:
     try:
-        return orchestrator.execute(run_id)
+        return redact_model(orchestrator.execute(run_id))
     except TestRunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EmptyExecutionPlanError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ExecutionCapacityError as exc:
+        # M10: bounded concurrency — nothing was started.
+        raise HTTPException(
+            status_code=429,
+            detail="Execution capacity exhausted; retry later.",
+            headers={"Retry-After": "30"},
+        ) from exc
 
 
 @router.get("/{run_id}/execution", response_model=Execution)
@@ -41,7 +50,7 @@ def get_latest_execution(
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Execution:
     try:
-        return orchestrator.get_latest_execution(run_id)
+        return redact_model(orchestrator.get_latest_execution(run_id))
     except TestRunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ExecutionNotFoundError as exc:

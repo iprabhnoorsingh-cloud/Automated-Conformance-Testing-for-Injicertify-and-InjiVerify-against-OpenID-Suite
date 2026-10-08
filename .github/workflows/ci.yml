@@ -48,6 +48,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r backend/requirements.txt
+      # M10: the API now requires a key. Generate a throwaway one per job
+      # (never stored in Git); the backend and ci_gate.py both read it from
+      # MCC_API_KEY in the job environment.
+      - name: Generate ephemeral API key
+        run: |
+          KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$KEY"
+          echo "MCC_API_KEY=$KEY" >> "$GITHUB_ENV"
       - name: Start backend
         working-directory: backend
         run: |
@@ -63,11 +71,11 @@ jobs:
           exit 1
       - name: Gate a passing mock run (must pass)
         run: |
-          RUN_ID=$(curl -fsS -X POST "$MCC_API_URL/api/test-runs" -H 'Content-Type: application/json' -d '{"run_name":"ci gate pass","environment":"development","components":["inji-certify"],"test_suites":[{"provider":"mock","suite_id":"conformance-ok","display_name":"conformance-ok"}],"benchmark":{"minimum_pass_rate":100,"critical_failures_allowed":0}}' | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          RUN_ID=$(curl -fsS -X POST "$MCC_API_URL/api/test-runs" -H "Authorization: Bearer $MCC_API_KEY" -H 'Content-Type: application/json' -d '{"run_name":"ci gate pass","environment":"development","components":["inji-certify"],"test_suites":[{"provider":"mock","suite_id":"conformance-ok","display_name":"conformance-ok"}],"benchmark":{"minimum_pass_rate":100,"critical_failures_allowed":0}}' | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
           python scripts/ci_gate.py --run-id "$RUN_ID"
       - name: Gate a failing mock run (gate must exit 1, proving fail-closed)
         run: |
-          RUN_ID=$(curl -fsS -X POST "$MCC_API_URL/api/test-runs" -H 'Content-Type: application/json' -d '{"run_name":"ci gate fail","environment":"development","components":["inji-certify"],"test_suites":[{"provider":"mock","suite_id":"conformance-fail","display_name":"conformance-fail"}],"benchmark":{"minimum_pass_rate":100,"critical_failures_allowed":0}}' | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          RUN_ID=$(curl -fsS -X POST "$MCC_API_URL/api/test-runs" -H "Authorization: Bearer $MCC_API_KEY" -H 'Content-Type: application/json' -d '{"run_name":"ci gate fail","environment":"development","components":["inji-certify"],"test_suites":[{"provider":"mock","suite_id":"conformance-fail","display_name":"conformance-fail"}],"benchmark":{"minimum_pass_rate":100,"critical_failures_allowed":0}}' | python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
           set +e
           python scripts/ci_gate.py --run-id "$RUN_ID"
           CODE=$?

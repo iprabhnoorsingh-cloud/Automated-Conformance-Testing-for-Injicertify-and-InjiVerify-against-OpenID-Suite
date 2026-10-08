@@ -21,13 +21,15 @@ client-supplied status.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from app.components import ALLOWED_COMPONENTS
 from app.benchmark_evaluator import evaluate_benchmark
+from app.concurrency import ExecutionCapacityError, ExecutionLimiter, execution_limiter
 from app.execution_repository import ExecutionRepository
 from app.executors import ExecutionContext, ExecutorRegistry, UnknownProviderError
 from app.orchestration import Execution, ExecutionStatus, Step, StepResult
+from app.outbound import UnsafeDestinationError, validate_suite_config_urls
 from app.repository import TestRunRepository
 from app.result_normalizer import normalization_failure_result, normalize_step_result
 from app.schemas import TestRunConfig, TestRunStatus
@@ -63,10 +65,13 @@ class Orchestrator:
         test_run_repository: TestRunRepository,
         execution_repository: ExecutionRepository,
         executors: ExecutorRegistry,
+        limiter: Optional[ExecutionLimiter] = None,
     ):
         self._test_runs = test_run_repository
         self._executions = execution_repository
         self._executors = executors
+        # M10: one process-wide capacity gate shared by every Orchestrator.
+        self._limiter = limiter if limiter is not None else execution_limiter
 
     def execute(self, test_run_id: str) -> Execution:
         run = self._test_runs.get(test_run_id)
@@ -77,6 +82,19 @@ class Orchestrator:
         if not steps:
             raise EmptyExecutionPlanError(test_run_id)
 
+        # M10: bounded concurrency. Non-blocking; checked before any state
+        # is created so a rejected request leaves no trace. Execution stays
+        # synchronous — the slot is held for its full duration and always
+        # released, whether it returns or raises.
+        if not self._limiter.try_acquire():
+            raise ExecutionCapacityError()
+        try:
+            return self._execute_plan(run, steps)
+        finally:
+            self._limiter.release()
+
+    def _execute_plan(self, run: TestRunConfig, steps: List[Step]) -> Execution:
+        test_run_id = run.id
         execution = Execution(
             id=str(uuid.uuid4()),
             test_run_id=run.id,
@@ -163,6 +181,23 @@ class Orchestrator:
         self, step: Step, context: ExecutionContext, test_run_id: str
     ) -> StepResult:
         started_at = datetime.now(timezone.utc)
+
+        # M10 SSRF policy: re-validate (with DNS resolution) every outbound
+        # destination in the suite config immediately before anything can
+        # act on it. Fail closed. See app/outbound.py for the limits of
+        # this check against the external Java/OpenID processes.
+        try:
+            validate_suite_config_urls(step.suite_config or {}, resolve=True)
+        except UnsafeDestinationError as exc:
+            return StepResult(
+                step_id=step.step_id,
+                status=ExecutionStatus.FAILED,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+                message=f"Outbound destination rejected by security policy ({exc}).",
+                details={"error_type": "unsafe_destination", "provider": step.provider},
+            )
+
         try:
             executor = self._executors.resolve(step.provider)
         except UnknownProviderError as exc:

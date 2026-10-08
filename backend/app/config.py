@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +11,17 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     environment: str = "development"
     cors_origins: str = "http://localhost:3000"
+
+    # M10 security hardening. MCC_API_KEY is the shared secret every API
+    # request (except GET /health) must present as `Authorization: Bearer`.
+    # There is deliberately no default: if it is unset (or shorter than
+    # app.auth.MIN_API_KEY_LENGTH) the API fails CLOSED and rejects every
+    # protected request. SecretStr keeps it out of repr()/logs.
+    api_key: Optional[SecretStr] = None
+    # Maximum simultaneous synchronous executions in this process; excess
+    # requests get HTTP 429. Each execution can run for a long time and
+    # holds a worker thread (and possibly a JVM), so keep this conservative.
+    max_concurrent_executions: int = Field(default=2, ge=1, le=64)
 
     # OpenID Foundation Conformance Suite integration (Milestone 4).
     # These use their exact upstream names (no MCC_ prefix) via

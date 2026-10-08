@@ -1,5 +1,6 @@
 """Pure M8 conformance-report projection and deterministic Markdown renderer."""
 
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -159,9 +160,9 @@ def render_markdown_report(report: ConformanceReport) -> str:
         "## Summary",
         "",
         f"- Schema version: `{report.schema_version}`",
-        f"- Test run: `{report.test_run.run_name}` (`{report.test_run.test_run_id}`)",
-        f"- Environment: `{report.test_run.environment}`",
-        f"- Execution: `{report.execution.execution_id}` (`{report.execution.status.value}`)",
+        f"- Test run: `{_code(report.test_run.run_name)}` (`{_code(report.test_run.test_run_id)}`)",
+        f"- Environment: `{_code(report.test_run.environment)}`",
+        f"- Execution: `{_code(report.execution.execution_id)}` (`{_code(report.execution.status.value)}`)",
         f"- Started: {_format_datetime(report.execution.started_at)}",
         f"- Completed: {_format_datetime(report.execution.completed_at)}",
         f"- Benchmark status: `{summary.benchmark_status}`",
@@ -219,14 +220,14 @@ def render_markdown_report(report: ConformanceReport) -> str:
     for step in report.steps:
         if step.openid_plan_id or step.openid_plan_name or step.openid_modules:
             detail_lines.append(
-                f"- `{_cell(step.step_id)}` OpenID: plan `{_cell(step.openid_plan_name)}` "
-                f"(`{_cell(step.openid_plan_id)}`), modules: "
+                f"- `{_code(step.step_id)}` OpenID: plan `{_code(step.openid_plan_name)}` "
+                f"(`{_code(step.openid_plan_id)}`), modules: "
                 f"{len(step.openid_modules or [])}"
             )
         if step.inji_test_counts is not None:
             counts = step.inji_test_counts
             detail_lines.append(
-                f"- `{_cell(step.step_id)}` Inji TestNG: {counts.passed}/{counts.total} "
+                f"- `{_code(step.step_id)}` Inji TestNG: {counts.passed}/{counts.total} "
                 f"passed, {counts.failed} failed, {counts.skipped} skipped"
             )
     if detail_lines:
@@ -301,9 +302,37 @@ def _format_datetime(value: Optional[datetime]) -> str:
     return value.isoformat() if value is not None else "—"
 
 
+# Characters that end a Markdown line (or are invisible controls): all are
+# folded to a single space so one value can never start a new block
+# (heading, list item, table row) or break out of its cell/line.
+_LINE_BREAKS = re.compile(r"[\r\n\v\f\x1c-\x1e\x85\u2028\u2029]+")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0e-\x1b\x7f]")
+
+
+def _flatten(value: object) -> str:
+    text = _LINE_BREAKS.sub(" ", str(value))
+    return _CONTROL_CHARS.sub("", text)
+
+
 def _cell(value: object) -> str:
+    """Render untrusted text safely inside a Markdown table cell: single
+    line, with backslash, pipe and backtick escaped (backslash first, so an
+    attacker-supplied `\\|` cannot cancel our own escape)."""
     if value is None:
         return "—"
     if isinstance(value, float):
         return f"{value:g}"
-    return str(value).replace("|", "\\|").replace("\n", " ")
+    return (
+        _flatten(value)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("`", "\\`")
+    )
+
+
+def _code(value: object) -> str:
+    """Render untrusted text inside an inline code span. A code span has no
+    escape mechanism, so backticks (which could close it) are replaced."""
+    if value is None:
+        return "—"
+    return _flatten(value).replace("`", "'")

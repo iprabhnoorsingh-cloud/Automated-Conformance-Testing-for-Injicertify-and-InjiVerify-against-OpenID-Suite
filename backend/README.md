@@ -15,8 +15,13 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
+export MCC_API_KEY="$(openssl rand -hex 32)"
 uvicorn app.main:app --reload --port 8000
 ```
+
+Run a **single** Uvicorn process: do not pass `--workers` > 1. JSON
+persistence and the execution limiter are process-local (see the Security
+section of the top-level README).
 
 ## Test
 
@@ -27,7 +32,7 @@ pytest
 ## Endpoints
 
 - `GET /` — service identification (`name`, `version`)
-- `GET /health` — health check (`{"status": "ok"}`)
+- `GET /health` — health check (`{"status": "ok"}`); the only unauthenticated endpoint. All others require `Authorization: Bearer $MCC_API_KEY`.
 
 ## Configuration
 

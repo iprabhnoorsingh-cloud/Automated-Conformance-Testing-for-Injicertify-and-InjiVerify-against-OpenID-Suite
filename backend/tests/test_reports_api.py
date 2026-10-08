@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.conftest import AUTH_HEADERS
 
 from app.dependencies import (
     get_execution_repository,
@@ -36,7 +37,7 @@ def report_client(tmp_path):
     app.dependency_overrides[get_orchestrator] = lambda: Orchestrator(
         test_runs, executions, registry
     )
-    with TestClient(app) as client:
+    with TestClient(app, headers=AUTH_HEADERS) as client:
         yield client, test_runs, executions
     app.dependency_overrides.clear()
 

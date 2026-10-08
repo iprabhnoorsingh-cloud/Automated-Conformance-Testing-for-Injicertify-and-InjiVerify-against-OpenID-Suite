@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from app.dependencies import get_execution_repository, get_test_run_repository
 from app.execution_repository import ExecutionRepository
 from app.report_generator import ConformanceReport, build_conformance_report, render_markdown_report
+from app.redaction import redact_model
 from app.repository import TestRunRepository
 
 
@@ -35,7 +36,9 @@ def get_report(
                 status_code=409,
                 detail="Execution has no benchmark evaluation; report cannot be generated.",
             )
-        report = build_conformance_report(test_run, execution)
+        # M10: reports are built from redacted copies so no credential or
+        # secret-shaped evidence text can reach JSON or Markdown output.
+        report = build_conformance_report(redact_model(test_run), redact_model(execution))
         if format == "markdown":
             return Response(
                 content=render_markdown_report(report),

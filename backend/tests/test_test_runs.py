@@ -1,6 +1,7 @@
 from typing import Optional
 import pytest
 from fastapi.testclient import TestClient
+from tests.conftest import AUTH_HEADERS
 
 from app.dependencies import get_test_run_repository
 from app.json_repository import JsonFileTestRunRepository
@@ -32,7 +33,7 @@ VALID_PAYLOAD = {
 def client(tmp_path):
     repo = JsonFileTestRunRepository(tmp_path / "test_runs.json")
     app.dependency_overrides[get_test_run_repository] = lambda: repo
-    with TestClient(app) as test_client:
+    with TestClient(app, headers=AUTH_HEADERS) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 

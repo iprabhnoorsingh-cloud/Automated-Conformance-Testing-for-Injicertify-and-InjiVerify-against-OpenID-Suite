@@ -25,9 +25,11 @@ _OUTPUT_EXCERPT_LIMIT = 4000
 
 _SECRET_PATTERNS = [
     re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?\S+"),
-    re.compile(r"(?i)\b(password\w*\s*[:=]\s*)\S+"),
-    re.compile(r"(?i)\b(secret\w*\s*[:=]\s*)\S+"),
-    re.compile(r"(?i)\b(\w*token\w*\s*[:=]\s*)\S+"),
+    # M10: keyword may be a suffix/infix of an identifier (client_secret,
+    # api_password) and may be a quoted JSON key ("client_secret": "...").
+    re.compile(r"(?i)\b(\w*password\w*[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
+    re.compile(r"(?i)\b(\w*secret\w*[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
+    re.compile(r"(?i)\b(\w*token\w*[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]+"),
     re.compile(r"(?i)(cookie\s*[:=]\s*)\S+"),
 ]
 

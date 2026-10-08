@@ -53,7 +53,8 @@ python scripts/ci_gate.py --run-id <test-run-id> [--base-url http://localhost:80
 - `--run-id` (required): the Test Run to execute.
 - `--base-url` or env `MCC_API_URL` (default `http://localhost:8000`).
 - `--timeout`: seconds to wait for the synchronous run (default 3600).
-- Standard library only; no secrets are read or required.
+- Standard library only. The API key is read from env `MCC_API_KEY` (never an
+  argument) and sent as `Authorization: Bearer`; it is never printed.
 
 | Exit | Meaning |
 | ---- | ------- |
@@ -68,6 +69,45 @@ Ordinary CI (`conformance-gate` job in `.github/workflows/ci.yml`) proves
 the mechanism using only the deterministic `mock` provider: one passing run
 (must exit 0) and one failing run (must exit 1). Real OpenID Conformance and
 Inji test-rig integration tests remain opt-in and never run in CI.
+
+## Security (Milestone 10)
+
+**Authentication.** Every endpoint except `GET /health` requires
+`Authorization: Bearer <MCC_API_KEY>`. Set `MCC_API_KEY` (at least 16
+characters, e.g. `openssl rand -hex 32`) in the backend's environment; it is
+never stored in Git. If it is unset or too short the API **fails closed**
+(401 for everything but `/health`). The same variable is read by
+`scripts/ci_gate.py`. In GitHub Actions the `conformance-gate` job generates a
+throwaway key per run. **The bundled Next.js frontend does not send this key
+yet**, so it cannot talk to an authenticated backend until a server-side
+proxy / UI login is added.
+
+**SSRF policy.** Destination URLs in a test run (Inji `env_endpoint` /
+`*_base_url` fields and any URL inside an OpenID `plan_configuration`) must be
+`http(s)`, carry no userinfo and resolve to public addresses only — no
+loopback, private (RFC1918), link-local, CGNAT or IPv6 equivalents. Checked
+at creation (HTTP 422) and again with DNS at execution time. This is **not
+complete SSRF prevention**: the Inji Java test rigs and the OpenID Conformance
+Suite make the real connections later, re-resolve DNS themselves and may
+follow redirects, so DNS rebinding is not covered. Use network egress controls
+around those processes. Targets on private networks are rejected by design.
+
+**Concurrency.** At most `MCC_MAX_CONCURRENT_EXECUTIONS` (default 2)
+executions run at once per process; further `POST .../execute` calls get HTTP
+429 and start nothing. Execution is still synchronous.
+
+**Secrets.** Credentials (`env_user`, anything named like a
+secret/password/token/credential/private key/API key/JWKS, PEM private keys)
+are redacted in every API response and report; the stored JSON files keep the
+real values because executions need them, so protect `backend/data/`.
+Credentials passed as `-Denv.user=...` are visible in the OS process list of
+the host running the Java test rig (upstream contract).
+
+**Deployment constraint — single worker only.** Persistence is JSON files
+guarded by an in-process lock, and the concurrency limiter is in-process.
+Run exactly one Uvicorn process: **never use `--workers` > 1**, never run
+multiple replicas against the same `backend/data/`. Multi-process deployment
+needs a persistence redesign first.
 
 ## Future milestones
 
@@ -99,7 +139,8 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+export MCC_API_KEY="$(openssl rand -hex 32)"   # required; all endpoints except /health reject requests without it
+uvicorn app.main:app --reload --port 8000        # single worker only (see Security)
 ```
 
 ## Frontend setup

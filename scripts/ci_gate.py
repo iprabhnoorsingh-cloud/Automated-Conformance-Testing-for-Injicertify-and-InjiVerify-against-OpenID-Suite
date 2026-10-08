@@ -18,6 +18,12 @@ Exit codes:
     4  network failure or timeout
     5  invalid usage / configuration (e.g. bad base URL)
 
+Authentication (M10): the backend requires ``Authorization: Bearer <key>``.
+The key is read from the MCC_API_KEY environment variable only (never a CLI
+argument, so it does not appear in process listings) and is never printed.
+This is the only M10 change to this script; gate semantics and exit codes
+are unchanged. Without a key the backend answers 401 -> exit 3 (fail closed).
+
 Standard library only, so it runs in CI without installing anything.
 """
 
@@ -85,6 +91,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         + "/execute"
     )
     request = urllib.request.Request(url, data=b"", method="POST")
+    api_key = os.environ.get("MCC_API_KEY")
+    if api_key:
+        request.add_header("Authorization", f"Bearer {api_key}")
     print(f"ci_gate: executing test run {args.run_id} via POST {url}")
 
     try:

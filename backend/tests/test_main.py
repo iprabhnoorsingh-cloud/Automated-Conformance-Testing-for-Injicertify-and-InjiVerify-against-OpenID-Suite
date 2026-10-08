@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.config import settings
+from tests.conftest import AUTH_HEADERS
 
 client = TestClient(app)
 
@@ -17,5 +18,5 @@ def test_health_returns_status_ok():
 
 
 def test_root_returns_app_name():
-    response = client.get("/")
+    response = client.get("/", headers=AUTH_HEADERS)
     assert response.json()["name"] == settings.app_name

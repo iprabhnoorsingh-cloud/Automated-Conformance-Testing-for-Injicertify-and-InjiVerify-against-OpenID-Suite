@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.dependencies import get_test_run_repository
+from app.redaction import redact_model
 from app.repository import TestRunRepository
 from app.schemas import (
     TestRunConfig,
@@ -33,14 +34,14 @@ def create_test_run(
         created_at=datetime.now(timezone.utc),
         **payload.model_dump(),
     )
-    return repo.create(run)
+    return redact_model(repo.create(run))
 
 
 @router.get("", response_model=list[TestRunResponse])
 def list_test_runs(
     repo: TestRunRepository = Depends(get_test_run_repository),
 ) -> list[TestRunConfig]:
-    return repo.list_all()
+    return [redact_model(run) for run in repo.list_all()]
 
 
 @router.get("/{run_id}", response_model=TestRunResponse)
@@ -51,7 +52,7 @@ def get_test_run(
     run = repo.get(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Test run not found")
-    return run
+    return redact_model(run)
 
 
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
