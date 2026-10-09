@@ -32,6 +32,7 @@ class ExecutionStatus(str, Enum):
     RUNNING = "RUNNING"
     PASSED = "PASSED"
     FAILED = "FAILED"
+    ERROR = "ERROR"
     CANCELLED = "CANCELLED"
 
 

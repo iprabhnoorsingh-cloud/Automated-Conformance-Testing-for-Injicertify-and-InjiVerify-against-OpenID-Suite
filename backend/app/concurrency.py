@@ -25,7 +25,7 @@ class ExecutionLimiter:
             raise ValueError("capacity must be >= 1")
         self._capacity = capacity
         self._in_use = 0
-        self._lock = threading.Lock()
+        self._cond = threading.Condition(threading.Lock())
 
     @property
     def capacity(self) -> int:
@@ -33,20 +33,30 @@ class ExecutionLimiter:
 
     @property
     def in_use(self) -> int:
-        with self._lock:
+        with self._cond:
             return self._in_use
 
-    def try_acquire(self) -> bool:
-        with self._lock:
-            if self._in_use >= self._capacity:
-                return False
+    def acquire(self, blocking: bool = True) -> bool:
+        with self._cond:
+            if not blocking:
+                if self._in_use >= self._capacity:
+                    return False
+                self._in_use += 1
+                return True
+
+            while self._in_use >= self._capacity:
+                self._cond.wait()
             self._in_use += 1
             return True
 
+    def try_acquire(self) -> bool:
+        return self.acquire(blocking=False)
+
     def release(self) -> None:
-        with self._lock:
+        with self._cond:
             if self._in_use > 0:
                 self._in_use -= 1
+                self._cond.notify(1)
 
 
 execution_limiter = ExecutionLimiter(settings.max_concurrent_executions)

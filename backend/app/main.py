@@ -8,7 +8,21 @@ from app.health import router as health_router
 from app.reports import router as reports_router
 from app.test_runs import router as test_runs_router
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+from contextlib import asynccontextmanager
+from app.async_runner import async_runner, cleanup_stale_executions
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # M11-A: Clean up stale QUEUED/RUNNING executions on server restart
+    cleanup_stale_executions()
+
+    # Start the async execution worker
+    async_runner.start()
+    yield
+    # Stop the async worker safely
+    await async_runner.stop()
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 # M10: authentication is registered BEFORE CORS so CORS is the outermost
 # layer: browser preflight (OPTIONS) requests, which carry no credentials,

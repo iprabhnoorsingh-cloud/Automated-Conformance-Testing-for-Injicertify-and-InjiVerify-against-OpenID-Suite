@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # requests get HTTP 429. Each execution can run for a long time and
     # holds a worker thread (and possibly a JVM), so keep this conservative.
     max_concurrent_executions: int = Field(default=2, ge=1, le=64)
+    # Maximum number of async jobs allowed in the queue.
+    max_async_queue_size: int = Field(default=20, ge=1, le=1000)
 
     # OpenID Foundation Conformance Suite integration (Milestone 4).
     # These use their exact upstream names (no MCC_ prefix) via

@@ -74,6 +74,19 @@ class Orchestrator:
         self._limiter = limiter if limiter is not None else execution_limiter
 
     def execute(self, test_run_id: str) -> Execution:
+        # M10: bounded concurrency. Non-blocking; checked before any state
+        # is created so a rejected request leaves no trace. Execution stays
+        # synchronous — the slot is held for its full duration and always
+        # released, whether it returns or raises.
+        if not self._limiter.try_acquire():
+            raise ExecutionCapacityError()
+        try:
+            execution = self.plan_execution(test_run_id)
+            return self.run_execution(execution.id)
+        finally:
+            self._limiter.release()
+
+    def plan_execution(self, test_run_id: str) -> Execution:
         run = self._test_runs.get(test_run_id)
         if run is None:
             raise TestRunNotFoundError(test_run_id)
@@ -82,19 +95,6 @@ class Orchestrator:
         if not steps:
             raise EmptyExecutionPlanError(test_run_id)
 
-        # M10: bounded concurrency. Non-blocking; checked before any state
-        # is created so a rejected request leaves no trace. Execution stays
-        # synchronous — the slot is held for its full duration and always
-        # released, whether it returns or raises.
-        if not self._limiter.try_acquire():
-            raise ExecutionCapacityError()
-        try:
-            return self._execute_plan(run, steps)
-        finally:
-            self._limiter.release()
-
-    def _execute_plan(self, run: TestRunConfig, steps: List[Step]) -> Execution:
-        test_run_id = run.id
         execution = Execution(
             id=str(uuid.uuid4()),
             test_run_id=run.id,
@@ -109,6 +109,16 @@ class Orchestrator:
 
         run.status = TestRunStatus.QUEUED
         self._test_runs.update(run)
+
+        return execution
+
+    def run_execution(self, execution_id: str) -> Execution:
+        execution = self._executions.get(execution_id)
+        if execution is None:
+            raise ExecutionNotFoundError(execution_id)
+        run = self._test_runs.get(execution.test_run_id)
+        if run is None:
+            raise TestRunNotFoundError(execution.test_run_id)
 
         execution.status = ExecutionStatus.RUNNING
         run.status = TestRunStatus.RUNNING
@@ -126,7 +136,7 @@ class Orchestrator:
             execution.current_step = step.step_id
             self._executions.update(execution)
 
-            result = self._run_step_safely(step, context, test_run_id)
+            result = self._run_step_safely(step, context, run.id)
 
             step.status = result.status
             execution.step_results.append(result)
