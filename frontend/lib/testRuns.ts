@@ -1,4 +1,4 @@
-import { API_URL } from "@/lib/config";
+
 
 export type Environment = "development" | "staging" | "production";
 
@@ -201,14 +201,15 @@ async function parseErrorDetail(response: Response): Promise<string> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const proxyPath = path.replace(/^\/api/, "/api/proxy");
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(proxyPath, {
       headers: { "Content-Type": "application/json" },
       ...init,
     });
   } catch {
     throw new ApiError(
-      "Could not reach the backend. Confirm it's running and NEXT_PUBLIC_API_URL is correct.",
+      "Could not reach the frontend server proxy.",
     );
   }
 
@@ -258,4 +259,18 @@ export async function getLatestExecution(
     }
     throw err;
   }
+}
+
+export function executeTestRunAsync(id: string): Promise<Execution> {
+  return request<Execution>(`/api/test-runs/${id}/execute-async`, {
+    method: "POST",
+  });
+}
+
+export function listExecutions(id: string): Promise<Execution[]> {
+  return request<Execution[]>(`/api/test-runs/${id}/executions`);
+}
+
+export function getExecution(executionId: string): Promise<Execution> {
+  return request<Execution>(`/api/executions/${executionId}`);
 }

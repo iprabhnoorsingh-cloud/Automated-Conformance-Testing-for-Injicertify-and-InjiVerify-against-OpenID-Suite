@@ -10,9 +10,11 @@ import {
   Execution,
   TestRun,
   deleteTestRun,
-  executeTestRun,
+  executeTestRunAsync,
   getLatestExecution,
   getTestRun,
+  listExecutions,
+  getExecution,
 } from "@/lib/testRuns";
 
 export default function TestRunDetailPage() {
@@ -22,16 +24,18 @@ export default function TestRunDetailPage() {
 
   const [run, setRun] = useState<TestRun | null>(null);
   const [execution, setExecution] = useState<Execution | null>(null);
+  const [executionHistory, setExecutionHistory] = useState<Execution[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    Promise.all([getTestRun(runId), getLatestExecution(runId)])
-      .then(([runData, executionData]) => {
+    Promise.all([getTestRun(runId), getLatestExecution(runId), listExecutions(runId)])
+      .then(([runData, executionData, historyData]) => {
         setRun(runData);
         setExecution(executionData);
+        setExecutionHistory(historyData);
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 404) {
@@ -44,17 +48,40 @@ export default function TestRunDetailPage() {
       });
   }, [runId]);
 
+  useEffect(() => {
+    const isPending = execution?.status === "QUEUED" || execution?.status === "RUNNING";
+    if (!execution || !isPending) {
+      return;
+    }
+    const targetExecutionId = execution.id;
+    const timer = setInterval(async () => {
+      try {
+        const updated = await getExecution(targetExecutionId);
+        setExecution(updated);
+        if (updated.status !== "QUEUED" && updated.status !== "RUNNING") {
+          const history = await listExecutions(runId);
+          setExecutionHistory(history);
+        }
+      } catch (err) {
+        console.error("Polling error", err);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [execution, runId]);
+
   async function handleExecute() {
     setExecuting(true);
     setError(null);
     try {
-      const result = await executeTestRun(runId);
+      const result = await executeTestRunAsync(runId);
       setExecution(result);
       const runData = await getTestRun(runId);
       setRun(runData);
+      const history = await listExecutions(runId);
+      setExecutionHistory(history);
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : "Failed to execute test run.",
+        err instanceof ApiError ? err.message : "Failed to queue test run execution.",
       );
     } finally {
       setExecuting(false);
@@ -176,7 +203,7 @@ export default function TestRunDetailPage() {
             {execution && (
               <section className="flex flex-col gap-3 border border-neutral-200 p-4 dark:border-neutral-800">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-medium">Latest Execution</h2>
+                  <h2 className="text-sm font-medium">Execution Details</h2>
                   <StatusBadge status={execution.status} />
                 </div>
                 <p className="text-sm text-neutral-500 dark:text-neutral-400">
@@ -213,6 +240,43 @@ export default function TestRunDetailPage() {
                     );
                   })}
                 </ul>
+              </section>
+            )}
+
+            {executionHistory.length > 0 && (
+              <section className="mt-4 flex flex-col gap-3">
+                <h2 className="text-sm font-medium">Execution History</h2>
+                <div className="flex flex-col gap-2">
+                  {executionHistory.map((ex) => (
+                    <div
+                      key={ex.id}
+                      className={`flex items-center justify-between border p-3 text-sm ${
+                        ex.id === execution?.id
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950"
+                          : "border-neutral-200 dark:border-neutral-800"
+                      }`}
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {new Date(ex.started_at).toLocaleString()}
+                        </div>
+                        <div className="text-neutral-500 dark:text-neutral-400">
+                          {ex.completed_steps} / {ex.total_steps} steps
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <StatusBadge status={ex.status} />
+                        <button
+                          onClick={() => setExecution(ex)}
+                          disabled={ex.id === execution?.id}
+                          className="text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+                        >
+                          {ex.id === execution?.id ? "Viewing" : "View"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
           </>
