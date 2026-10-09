@@ -131,3 +131,12 @@ def list_executions_for_run(
     # newest first
     results.sort(key=lambda x: (x.started_at, x.id), reverse=True)
     return [redact_model(r) for r in results]
+
+@router.get("/api/executions", response_model=List[Execution])
+def list_all_executions(
+    executions: ExecutionRepository = Depends(get_execution_repository),
+) -> List[Execution]:
+    data = executions._read_all()
+    results = [Execution.model_validate(v) for v in data.values()]
+    results.sort(key=lambda x: (x.started_at, x.id), reverse=True)
+    return [redact_model(r) for r in results]

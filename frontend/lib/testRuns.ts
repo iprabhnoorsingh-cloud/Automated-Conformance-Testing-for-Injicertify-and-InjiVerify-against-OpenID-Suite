@@ -157,6 +157,29 @@ export interface StepResult {
   details?: Record<string, unknown> | null;
 }
 
+export interface BenchmarkViolation {
+  code: string;
+  message: string;
+  expected?: string | number | boolean | null;
+  actual?: string | number | boolean | null;
+  step_ids?: string[] | null;
+}
+
+export type BenchmarkStatus = "PASSED" | "FAILED";
+
+export interface BenchmarkEvaluation {
+  status: BenchmarkStatus;
+  evidence_complete: boolean;
+  total_planned_steps: number;
+  normalized_result_count: number;
+  passed_steps: number;
+  failed_steps: number;
+  pass_rate: number;
+  minimum_pass_rate: number;
+  critical_failures_allowed: number;
+  violations: BenchmarkViolation[];
+}
+
 export interface Execution {
   id: string;
   test_run_id: string;
@@ -168,6 +191,7 @@ export interface Execution {
   completed_steps: number;
   steps: Step[];
   step_results: StepResult[];
+  benchmark_evaluation?: BenchmarkEvaluation | null;
 }
 
 export class ApiError extends Error {
@@ -273,4 +297,8 @@ export function listExecutions(id: string): Promise<Execution[]> {
 
 export function getExecution(executionId: string): Promise<Execution> {
   return request<Execution>(`/api/executions/${executionId}`);
+}
+
+export function listAllExecutions(): Promise<Execution[]> {
+  return request<Execution[]>("/api/executions");
 }

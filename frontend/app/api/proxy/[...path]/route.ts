@@ -11,6 +11,7 @@ const ALLOWED_ENDPOINTS = [
   { method: "GET", pathRegex: /^\/api\/test-runs\/[^/]+\/execution$/ },
   { method: "GET", pathRegex: /^\/api\/test-runs\/[^/]+\/executions$/ },
   { method: "GET", pathRegex: /^\/api\/executions\/[^/]+$/ },
+  { method: "GET", pathRegex: /^\/api\/executions$/ },
 ];
 
 function isAllowed(method: string, path: string) {
